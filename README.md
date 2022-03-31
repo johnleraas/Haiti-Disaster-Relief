@@ -4,7 +4,7 @@ This project was done as part of a class on machine learning and used actual sat
 
 The primary learning outcomes were (i) gaining familiarity with and hyperparameter tuning of different ML models, (ii) comparison of different models and understanding model capacity, and (iii) thinking through the objective function in detail. Notably, very little instruction was provided and certain assumptions and considerations are discussed below.
 
-This project was coded in R. <ins> See the full knit HTML here:</ins> [Haiti Disaster Relief Project](https://github.com/johnleraas/Haiti-Disaster-Relief/blob/main/Haiti_Disaster_Relief.html)
+This project was coded in R. <ins> To see the full knit R Markdown, please download it here:</ins> [Haiti Disaster Relief Project](https://github.com/johnleraas/Haiti-Disaster-Relief/blob/main/Haiti_Disaster_Relief.html)
 
 # Introduction
 On January 12, 2010 a 7.0 magnitude earthquake occurred in Haiti 16 miles west of its capital, Port-au-Prince. An estimated three million people were affected by the earthquake. Following the earthquake many Haitians were in desperate need of food, water, and other necessary supplies however infrastructure was significantly impacted making it difficult to locate those affected.
@@ -99,11 +99,142 @@ The ROC Curves were generated using out of sample data based upon each cross val
 
 Each of the model fits the data remarkably well based upon its ROC curve. LDA, which performed the poorest in the model training and selection process generated an AUC of 0.9889.
 
+# Hold Out Data
+
+For the purpose of this project, a set of data was provided after the initial modeling. A portion of this data was not "clean" and required exploration to discern usable data from unusable data. The hold-out data was obtained in a single .zip file. After unzipping, 11 files were observed of which 3 were JPEG files. These JPEG files possess unlabeled data, and are not useful for evaluating our models (though blue tarps are clearly visible to the human eye). The remaining contain labels of “Blue_Tarps”, “NOT_BLUE_Tarps”, or “NON_Blue_Tarps” in the file name. A subset of data within each file was evaluated to check for likely mislabeling. Specifically, the training data indicated that Blue Tarps typically have higher Blue values than Red or Green. Upon an initial inspection of the data, the labeling appeared correct. Additionally, it seems that columns B1, B2, B3 correspond to Red, Green, Blue (RGB) in the training data. Download the R Markdown file for more detail: [Haiti Disaster Relief Project](https://github.com/johnleraas/Haiti-Disaster-Relief/blob/main/Haiti_Disaster_Relief.html)
+
 <p align="center">
   <img width = 45% height = 45% src="https://github.com/johnleraas/Haiti-Disaster-Relief/blob/main/Docs/HoldOut_Pairwise_FullDataSet.png">
   <img width = 45% height = 45% src="https://github.com/johnleraas/Haiti-Disaster-Relief/blob/main/Docs/HoldOut_Pairwise_BlueTarps.png">
 </p>
 
+Certain features or groups of data are observed in the hold-out data which are not observed in the training data. In particular, when looking at the full data set each pairwise comparison exhibits essentially two or three groups of data. This would warrant further inspection or discussions with those collecting the data to understand the differences. For example, these observations may correspond to different times of day or weather patterns.
+
+Additionally, in comparing the Blue/Red comparisons between the full data set and “Blue Tarp” subset, it seems that one “group” of data possessed no Blue Tarp observations. The same is true when considering the Blue/Green pairwise comparisons.
+
 <p align="center">
   <img width = 75% height = 75% src="https://github.com/johnleraas/Haiti-Disaster-Relief/blob/main/Docs/HoldOut_Model_Summary_Table.png">
 </p>
+
+Of note the AUROC for most models, with the exception of QDA and Penalized Logistic Regression remained strong on the hold-out data. While there is clearly a significant difference in the frequency of blue tarps observed in the training and hold-out data sets, the AUROCs and TPRs suggest that the threshold could be re-evaluated for certain models.
+
+The highest true positive rates and precision values, and hence the “best models”, are associated with Logistic Regression and KNN. The Random Forest and Support Vector Machine models demonstrated high true positive rates and AUROCs, suggesting that threshold could be re-evaluated to improve precision, though Logistic Regression already possessed the highest true positive rate and precision. Support Vector Machines generated a relatively high false positive rate.
+
+# Conclusions
+
+## Discuss the best performing algorithm(s) in cross-validation and hold-out data
+
+__Cross Validation__
+
+Cross validation on the training data set suggested that LDA and QDA were largely inadequate in comparison to the other models based upon the associated true positive rate and precision (as well as the previously defined loss function). Of the remaining models, Support Vector Machines appeared weakest, as illustrated by the higher loss function value (suggesting a low TPR in relation to precision). Logistic Regression, KNN, Penalized Logistic Regression, and Random Forest were roughly comparable in terms of performance.
+
+__Hold-Out Data__
+
+Logistic Regression (utilizing up to third degree polynomial “Blue” terms) clearly performed the best, with the highest true positive rate and precision. KNN also performed well relative to the other models. LDA performed well, particularly given its relative cross-validation performance. Random Forest also generated acceptable relative performance.
+
+Penalized Logistic Regression performed particularly poorly, though Support Vector Machines and QDA also underperformed.
+
+Of note, the precision of each model was suboptimal. This is at least partiallly due to the difference in frequency of Blue Tarp observations between the data sets. In addition, obvious differences were observed between the Hold-Out Data EDA and the training data set. The Hold-Out data appeared to be collected under different weather/light conditions and/or with different equipment.
+
+## Discuss or present an analysis of why these findings are compatible or reconcilable
+As previously discussed, significant differences existed between the training and hold-out data sets. Specifically, the frequency of blue tarps was over four times higher in the training set than the hold-out set. Additionally, the brightness of the data sets appears to be significantly higher in the training set based upon the Red, Green, and Blue predictor value median and mean values.
+
+Each of the models demonstrated a significant decline in precision between cross validation and the hold-out dataset, at least partially due to the lower frequency of blue tarps, resulting in a lower number of true positives relative to false positives. This issue can potentially be solved by re-evaluating the threshold (either in real-time as measurements come in, or through some high-level understanding of the process which generated the training data and hold-out data). Models such as Logistic Regression generated a strong AUROC during cross validation and as measured in the hold-out data set. These models could potentially improve hold-out results by re-evaluating the threshold.
+
+It should be noted that while the Support Vector Machine model generated a strong AUROC, its high false positive rate relative to the other models results in a suboptimal model. Other kernels were explored (not pictured) which resulted in large swings in the TPR and FPR but generally also resulted in a suboptimal model. For example, the radial kernel with γ = 1e-4 and cost = 1e2 showed obvious signs of overfitting and experienced performance declines consistent with penalized logistic regression.
+
+Penalized Logistic Regression demonstrated a significant decline performance, as observed by not only the true positive rate and false positive rate but also by the significant decline in AUROC. Less flexible models generally performed better on the hold-out data than more flexible models. This can be observed directly by (1) Logistic Regression generating the strongest performance, (2) LDA significantly outperforming QDA on the hold-out data set despite underperforming during cross validation, and (3) the significant decline in performance of penalized logistic regression (which considered up to third degree polynomials of each predictor). This suggests some degree of overfitting may have occurred on the training data set by the more flexible models. This overfitting was made evident by the somewhat specific data set used to train relative to the hold-out data set, which seemed to be collected under a variety of conditions.
+
+## Present a recommendation and rationale for which algorithm to ensure for detection of blue tarps
+I would recommend Logistic Regression as the algorithm to use for detecting blue tarps (specifically considering higher order polynomials for the Blue predictor). With regards to cross-validation, the performance of Logistic Regression was highly comparable to other models (as measured by AUROC, TPR, FPR, Precision, and Loss). At the same time, Logistic Regression is one of the least flexible models, and thus less subject to overfitting.
+
+Logistic Regression clearly outperformed each of the other models on the hold-out data set, as demonstrated by AUROC, TPR, FPR, Precision, and Loss. Additionally, while the precision declined significantly between cross validation and the hold-out evaluation, this could be addressed by evaluation of real-time data and/or insight regarding the collection of training vs. hold-out data (e.g. the training data was collected on a sunny day or very close to an urban center). The importance of precision is subject to the actual circumstances of the situation. Specifically, if in a real-world implementation someone were able to “check” the aerial photographs before sending supplies the lower precision may be completely acceptable. Conversely, budgets, supply inventories, and an inability to quickly mitigate false positives may determine the threshold derived through cross-validation to be inadequate for Logistic Regression and all models.
+
+## Discuss the relevance of the metrics calculated in the table to this application context
+* __AUROC:__ measures the predictive ability of a model across a variety of thresholds. This is an extremely useful metric, particularly in optimizing tuning parameters. Generating the highest AUROC suggests that the model can generate a higher tradeoff between true positive rate and false positive rate (which inherently affects precision).
+
+* __Accuracy:__ has limited relevance to this particular application. Accuracy could arguable useful to support decisions based upon AUROC calculations, however it is largely unnecessary. In this situation the penalty for a false negative and false positive vary widely, as a false negative may result in the suffering and/or death of a human being. Within this context, a higher TPR and FPR associated with a lower accuracy are desirable within real-world constraints.
+
+* __TPR:__ true positive rate essentially indicates the percentage of people that will receive resources. TPR is extremely important given the context of this problem given that it is synonymous with lives saved and the prevention of human suffering.
+
+* __FPR:__ is important within the context of resource constraints. The importance of this metric is largely dependent upon the real-world application. If someone is able to quickly check an aerial photograph to double check the algorithm, there is a somewhat minimal cost to false positives. Conversely, if supplies have to be hiked in, significant budget constraints exist, or there are significant limits to supply inventories the false positive rate becomes more important. Additionally, the frequency of “blue tarp” observations relative to “no blue tarp” observations should be considered alongside the false positive rate. The false positive rate has a direct effect on cost (human time, monetary, supplies, etc.).
+
+* __Precision:__ can be interpreted as the percentage of predicted positives that are accurate. Precision is essentially a balance of positive benefit (lives saved/human suffering prevented) to cost. Given the context of this problem, precision is extremely important given that any humanitarian effort has some set of real-world constraints.
+
+## How effective do you think your work here could actually be in terms of helping to save human life?
+The results of this exercise are compelling, though some additional real-world insight may be required for successful implementation. Specifically, each of the models generated a precision of less than 50% on the hold-out data. Though limited information is presented about the real-world implementation, this seems problematic.
+
+This issue may be resolved with a re-evaluation of the threshold of certain models. As previously discussed, a re-evaluation of real-time data or some high-level insight may be beneficial. For example, human evaluation of a subset of aerial photos from each data set may indicate obvious differences and suggest using a higher threshold. Logistic Regression generated a TPR of .994 and a FPR of only .013, suggesting that it is a good candidate for this re-optimization.
+
+Even with the somewhat lower precision observed in the hold-out data, if these models were able to identify focus areas for further human inspection, they may still save a significant amount of time during an urgent situation.
+
+## Were there multiple adequately performing methods, or just one clear best method? What is your level of confidence in the results?
+Multiple adequate models were observed in this work. In particular, Logistic Regression, KNN, and Random Forest generated reasonable performance as measured by both cross validation and using the hold-out data set (assuming a low level of precision is acceptable and/or a re-evaluation of threshold is possible).
+
+Of note, significant differences existed between the training data set and the hold-out data set, including the frequency of blue tarp observations and brightness. While the results of the above-mentioned models are positive, given these differences, it does raise significant questions regarding the conditions of training data collection relative to the actual implementation. For example, if the training data was collected on a sunny day at noon near an urban area (bright with a high expected number of blue tarps), similar performance may not be expected on cloudy days during early morning in rural areas.The pairwise comparisons of the hold-out data set suggested that data was collected under multiple lighting conditions and/or with multiple sets of equipment.
+
+The limited information regarding the data collection process and conditions provides some uncertainty. However, I view this as a potential question to explore and consideration refining the model selection and optimization, rather than uncertainty in the process or potential for a model to save significant time and resources.
+
+# References
+
+Plotly
+
+https://plotly.com/r/3d-scatter-plots/
+
+Logistic Regressin with Class Separation
+
+https://medium.com/analytics-vidhya/how-to-use-linear-discriminant-analysis-for-classification-8e46e0ceb3ef
+
+AUC / ROC
+
+https://www.rdocumentation.org/packages/pROC/versions/1.17.0.1/topics/auc
+
+https://www.youtube.com/watch?v=qcvAqAH60Yw
+
+LDA ROC
+
+https://stackoverflow.com/questions/41533811/roc-curve-in-linear-discriminant-analysis-with-r
+
+Confusion Matrix
+
+https://classeval.wordpress.com/introduction/basic-evaluation-measures/
+
+glmnet
+
+https://glmnet.stanford.edu/articles/glmnet.html
+
+https://cran.r-project.org/web/packages/glmnet/glmnet.pdf
+
+Penalized Logistic Regression
+
+http://www.sthda.com/english/articles/36-classification-methods-essentials/149-penalized-logistic-regression-essentials-in-r-ridge-lasso-and-elastic-net/
+
+Random Forests
+
+https://cran.r-project.org/web/packages/randomForest/randomForest.pdf
+
+Support Vector Machine Probabilities
+
+https://www.rdocumentation.org/packages/e1071/versions/1.7-6/topics/predict.svm
+
+Haiti Earthquake
+
+https://en.wikipedia.org/wiki/2010_Haiti_earthquake
+
+ggplot
+
+http://www.sthda.com/english/wiki/ggplot2-scatter-plots-quick-start-guide-r-software-and-data-visualization
+
+https://ggplot2.tidyverse.org/reference/
+
+R Markdown
+
+https://people.ok.ubc.ca/jpither/modules/Symbols_markdown.html
+
+https://rpruim.github.io/s341/S19/from-class/MathinRmd.html
+
+Kable Extra
+
+https://cran.r-project.org/web/packages/kableExtra/vignettes/awesome_table_in_html.html#Column__Row_Specification
+
+https://cran.r-project.org/web/packages/kableExtra/kableExtra.pdf
