@@ -122,7 +122,7 @@ The highest true positive rates and precision values, and hence the “best mode
 
 # Conclusions
 
-## Discuss the best performing algorithm(s) in cross-validation and hold-out data
+### Discuss the best performing algorithm(s) in cross-validation and hold-out data
 
 __Cross Validation__
 
@@ -136,7 +136,7 @@ Penalized Logistic Regression performed particularly poorly, though Support Vect
 
 Of note, the precision of each model was suboptimal. This is at least partiallly due to the difference in frequency of Blue Tarp observations between the data sets. In addition, obvious differences were observed between the Hold-Out Data EDA and the training data set. The Hold-Out data appeared to be collected under different weather/light conditions and/or with different equipment.
 
-## Discuss or present an analysis of why these findings are compatible or reconcilable
+### Discuss or present an analysis of why these findings are compatible or reconcilable
 As previously discussed, significant differences existed between the training and hold-out data sets. Specifically, the frequency of blue tarps was over four times higher in the training set than the hold-out set. Additionally, the brightness of the data sets appears to be significantly higher in the training set based upon the Red, Green, and Blue predictor value median and mean values.
 
 Each of the models demonstrated a significant decline in precision between cross validation and the hold-out dataset, at least partially due to the lower frequency of blue tarps, resulting in a lower number of true positives relative to false positives. This issue can potentially be solved by re-evaluating the threshold (either in real-time as measurements come in, or through some high-level understanding of the process which generated the training data and hold-out data). Models such as Logistic Regression generated a strong AUROC during cross validation and as measured in the hold-out data set. These models could potentially improve hold-out results by re-evaluating the threshold.
@@ -145,12 +145,12 @@ It should be noted that while the Support Vector Machine model generated a stron
 
 Penalized Logistic Regression demonstrated a significant decline performance, as observed by not only the true positive rate and false positive rate but also by the significant decline in AUROC. Less flexible models generally performed better on the hold-out data than more flexible models. This can be observed directly by (1) Logistic Regression generating the strongest performance, (2) LDA significantly outperforming QDA on the hold-out data set despite underperforming during cross validation, and (3) the significant decline in performance of penalized logistic regression (which considered up to third degree polynomials of each predictor). This suggests some degree of overfitting may have occurred on the training data set by the more flexible models. This overfitting was made evident by the somewhat specific data set used to train relative to the hold-out data set, which seemed to be collected under a variety of conditions.
 
-## Present a recommendation and rationale for which algorithm to ensure for detection of blue tarps
+### Present a recommendation and rationale for which algorithm to ensure for detection of blue tarps
 I would recommend Logistic Regression as the algorithm to use for detecting blue tarps (specifically considering higher order polynomials for the Blue predictor). With regards to cross-validation, the performance of Logistic Regression was highly comparable to other models (as measured by AUROC, TPR, FPR, Precision, and Loss). At the same time, Logistic Regression is one of the least flexible models, and thus less subject to overfitting.
 
 Logistic Regression clearly outperformed each of the other models on the hold-out data set, as demonstrated by AUROC, TPR, FPR, Precision, and Loss. Additionally, while the precision declined significantly between cross validation and the hold-out evaluation, this could be addressed by evaluation of real-time data and/or insight regarding the collection of training vs. hold-out data (e.g. the training data was collected on a sunny day or very close to an urban center). The importance of precision is subject to the actual circumstances of the situation. Specifically, if in a real-world implementation someone were able to “check” the aerial photographs before sending supplies the lower precision may be completely acceptable. Conversely, budgets, supply inventories, and an inability to quickly mitigate false positives may determine the threshold derived through cross-validation to be inadequate for Logistic Regression and all models.
 
-## Discuss the relevance of the metrics calculated in the table to this application context
+### Discuss the relevance of the metrics calculated in the table to this application context
 * __AUROC:__ measures the predictive ability of a model across a variety of thresholds. This is an extremely useful metric, particularly in optimizing tuning parameters. Generating the highest AUROC suggests that the model can generate a higher tradeoff between true positive rate and false positive rate (which inherently affects precision).
 
 * __Accuracy:__ has limited relevance to this particular application. Accuracy could arguable useful to support decisions based upon AUROC calculations, however it is largely unnecessary. In this situation the penalty for a false negative and false positive vary widely, as a false negative may result in the suffering and/or death of a human being. Within this context, a higher TPR and FPR associated with a lower accuracy are desirable within real-world constraints.
@@ -161,14 +161,14 @@ Logistic Regression clearly outperformed each of the other models on the hold-ou
 
 * __Precision:__ can be interpreted as the percentage of predicted positives that are accurate. Precision is essentially a balance of positive benefit (lives saved/human suffering prevented) to cost. Given the context of this problem, precision is extremely important given that any humanitarian effort has some set of real-world constraints.
 
-## How effective do you think your work here could actually be in terms of helping to save human life?
+### How effective do you think your work here could actually be in terms of helping to save human life?
 The results of this exercise are compelling, though some additional real-world insight may be required for successful implementation. Specifically, each of the models generated a precision of less than 50% on the hold-out data. Though limited information is presented about the real-world implementation, this seems problematic.
 
 This issue may be resolved with a re-evaluation of the threshold of certain models. As previously discussed, a re-evaluation of real-time data or some high-level insight may be beneficial. For example, human evaluation of a subset of aerial photos from each data set may indicate obvious differences and suggest using a higher threshold. Logistic Regression generated a TPR of .994 and a FPR of only .013, suggesting that it is a good candidate for this re-optimization.
 
 Even with the somewhat lower precision observed in the hold-out data, if these models were able to identify focus areas for further human inspection, they may still save a significant amount of time during an urgent situation.
 
-## Were there multiple adequately performing methods, or just one clear best method? What is your level of confidence in the results?
+### Were there multiple adequately performing methods, or just one clear best method? What is your level of confidence in the results?
 Multiple adequate models were observed in this work. In particular, Logistic Regression, KNN, and Random Forest generated reasonable performance as measured by both cross validation and using the hold-out data set (assuming a low level of precision is acceptable and/or a re-evaluation of threshold is possible).
 
 Of note, significant differences existed between the training data set and the hold-out data set, including the frequency of blue tarp observations and brightness. While the results of the above-mentioned models are positive, given these differences, it does raise significant questions regarding the conditions of training data collection relative to the actual implementation. For example, if the training data was collected on a sunny day at noon near an urban area (bright with a high expected number of blue tarps), similar performance may not be expected on cloudy days during early morning in rural areas.The pairwise comparisons of the hold-out data set suggested that data was collected under multiple lighting conditions and/or with multiple sets of equipment.
