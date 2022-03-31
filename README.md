@@ -68,20 +68,36 @@ Additionally, once an optimal threshold value was selected, the tuning parameter
 10-fold cross validation was implemented to measure AUROC, Accuracy, True Positive Rate, False Positive Rate, Precision, and the previously described Loss Function. For a given tuning parameter or threshold, the out of sample predictions were aggregated for each fold and the associated calculations/measurements were performed on the single aggregated data set. This is equivalent to a weighted average (based on number of observations) applied to each measure. <ins>Notably, each model utilizes the same folds in the cross validation process.</ins>
 
 # Model Training
-Grid search processes were employed to find the optimal hyperparameters for each model.
+Grid search processes were employed to find the optimal hyperparameters for each model. In selecting a model, a threshold was selected as well. As noted previously, the model selection process focused on AUROC. Given the imprecise nature of the loss function within the context of this problem, the threshold was ultimately "hand chosen" with consideration given to the shape of the AUROC curves (number of additional false positives in return for one fewer false negatives).
 
+* __Logistic Regression:__ Logistic regression is typically not associated with a tuning parameter. However, given the initial observations in the exploratory data analysis that tarps correspond to “blueness” and that the relationships may not be nonlinear, higher degree polynomials of Red, Blue, and Green were explored with the polynomial degree acting as the hyperparameter.
+* __Linear Discriminant Analysis:__ Linear Discriminant Analysis does not possess any tuning parameters that require optimization. Threshold was selected in order to maximize the true positive rate while balancing precision.
+* __Quadratic Discriminant Analysis:__ Similar to LDA, Quadratic Discriminant Analysis does not require the optimization of any tuning parameters. Again, threshold was explored in detail and selected to maximize the true positive rate within some reasonable precision bound.
+* __K-Nearest Neighbors:__ K-Nearest Neighbors requires picking an optimal value of k (number of neighbors) using cross validation. Specifically, k is the tuning parameter within KNN. After this was completed, a threshold was selected in order to maximize the true positive rate while maintaining a reasonable precision. Of note each of the k neighbors effectively casts a vote on the prediction, so thresholds were explored corresponding to a number of votes (neighbors with a value “found”).
+* __Penalized Logistic Regression:__ Penalized Logistic Regression utilizes two tuning parameters: λ and α. The value of α dictates the elastic net penalty. A value of α = 0 corresponds to Ridge Regression, a values of α = 1 corresponds to Lasso Regression, and values of 0 < α = 0 < 1 correspond to Elastic Net regression. Values of α = 0, 0.25, 0.5, 0.75, and 1 were evaluated. For each value of α, a value of tuning parameter λ is selected using cross validation. This λ value corresponds to the penalty imposed on the magnitude of coefficients and has no useful interpretable meaning. 
+* __Random Forest:__ Random Forests utilize multiple tuning parameters, namely: (i) number of trees (ntree), (ii) the number of predictors to consider at each split (mtry), (iii) the sample size in each bagging sample from which to build the tree (sampsize), and (iv) tree size limit (maxnodes).
+* __Support Vector Machines:__ Support vector machines (SVMs) possess two general types of tuning parameters: kernel and cost. Within the kernel parameter, we look at kernel type and an additional parameter for fit which depends on type. For polynomial kernels, this second parameter is the polynomial itself. For radial kernels, this second parameter is expressed by γ.Three kernels were explored: linear (polynomial = 1), second degree polynomial, and radial kernels.
 
+# Summary Results
+
+The following table summarizes the results on the selected models utilizing 10-fold cross validation (specifically using the same folds for each model). Of note, logistic regression was performed using a third degree polynomial of the predictor Blue while penalized logistic regression includes third degree polynomial terms for Red, Blue, and Green.
 
 <p align="center">
   <img width = 75% height = 75% src="https://github.com/johnleraas/Haiti-Disaster-Relief/blob/main/Docs/Model_Summary_Table.png">
 </p>
 
+While each of the models generated a strong AUROC, LDA and QDA underperformed based upon their comparable true positive rate and precision. Neither model generated a precision of 80% and the true positive rate for both were smaller than their peers.
+
+Logistic Regression and Penalized Logistic Regression generated particularly strong true positive rates, particularly in relation to their respective precisions. Random Forest and KNN also generated strong true positive rates, though with precisions below 90%.
 
 <p align="center">
   <img width = 45% height = 45% src="https://github.com/johnleraas/Haiti-Disaster-Relief/blob/main/Docs/ROC_split1.png">
   <img width = 45% height = 45% src="https://github.com/johnleraas/Haiti-Disaster-Relief/blob/main/Docs/ROC_split2.png">
 </p>
 
+The ROC Curves were generated using out of sample data based upon each cross validation fold. The ROC Curves are presented in two separate plots given the overlapping nature of the curves. Logistic Regression was plotted in each for comparison.
+
+Each of the model fits the data remarkably well based upon its ROC curve. LDA, which performed the poorest in the model training and selection process generated an AUC of 0.9889.
 
 <p align="center">
   <img width = 45% height = 45% src="https://github.com/johnleraas/Haiti-Disaster-Relief/blob/main/Docs/HoldOut_Pairwise_FullDataSet.png">
