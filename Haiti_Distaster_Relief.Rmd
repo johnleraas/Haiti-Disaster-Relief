@@ -1,0 +1,2936 @@
+---
+title: "Disaster Relief Project: Part II"
+author: "John Leraas"
+date: "`r format(Sys.Date(), '%b %d, %Y')`"
+output:
+  html_document:
+    number_sections: true    
+    toc: true
+    toc_float: true
+    theme: cosmo
+    highlight: espresso    
+
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(error=TRUE,        # Keep compiling upon error
+                      collapse=FALSE,    # collapse by default
+                      echo=TRUE,         # echo code by default
+                      comment = "#>",    # change comment character
+                      fig.width = 5.5,     # set figure width
+                      fig.align = "center",# set figure position
+                      out.width = "49%", # set width of displayed images
+                      warning=TRUE,      # show R warnings
+                      message=TRUE)      # show R messages
+```
+
+<style>
+h1.title {
+  font-size: 2.2em; /* Title font size */
+}
+h1 {
+  font-size: 2em;   /* Header 1 font size */
+}
+h2 {
+  font-size: 1.5em;
+}
+h3 { 
+  font-size: 1.2em;
+}
+pre {
+  font-size: 0.8em;  /* Code and R output font size */
+}
+</style>
+
+
+
+**SYS 6018 | Spring 2021 | University of Virginia **
+
+*******************************************
+
+# Introduction 
+
+On January 12, 2010 a 7.0 magnitude earthquake occurred in Haiti 16 miles west of its capital, Port-au-Prince. An estimated three million people were affected by the earthquake. Following the earthquake many Haitians were in desperate need of food, water, and other necessary supplies however infrastructure was significantly impacted making it difficult to locate those affected.
+
+It was known that people were creating temporary shelters using blue tarps after their homes had been destroyed by the earthquake. It was also known that these tarps would be a good indicator of the location of displaced persons. A team from the Rochester Institute of Technology flew aircraft to collect high resolution, geo-referenced imagery, however there was limited time for humans to visually inspect each photograph to identify each blue tarp. 
+
+The goal of this project is to find an algorithm that can effectively search the images in order to locate displaced persons. The location would then be communicated to rescue workers so that they can help those in need in time.  In this aim, several different models were trained, compared, and evaluated.
+
+# Training Data / EDA
+
+## Load Libraries
+```{r load-packages, warning=FALSE, message=FALSE}
+# Load Required Packages
+library(tidyverse) #Assorted Data Manipulation
+library(MASS) #LDA, QDA
+library(class) #KNN
+library(boot) #Cross Validation (cv.glm)
+library(plotly) #3D Scatter Plot
+library(pROC) #ROC Calculation
+library(glmnet) #Penalized Logistic Regression
+library(ggplot2) #Plotting/Graphing
+library(kableExtra) #Knitting/Formatting
+library(randomForest) #Random Forest
+library(e1071) #SVMs
+```
+
+## Load Data
+```{r load data, warning=FALSE, message=FALSE}
+#Import from CSV file
+haiti <- read.csv("HaitiPixels.csv")
+
+#Ensure data imported correctly
+head(haiti)
+
+#Data overview
+summary(haiti)
+
+#Attach data set
+attach(haiti)
+```
+Class: While class includes a variety of possible values, including "Rooftop", "Vegetation", and "Soil", we are only concerned with whether it is "Blue Tarp" or not.
+
+RGB Pixel Values: Red and Green range from 48 to 256. Blue ranges from 44 to 256.
+
+
+## Exploratory Data Analysis - Pairwise Comparisons
+
+```{r pairwise}
+#Pairwise comparisons of full data set
+pairs(haiti[, 2:4], main = "Full Data Set")
+
+#Pairwise comparisons of Blue Tarp values only
+summary(haiti[haiti$Class == "Blue Tarp", 2:4])
+pairs(haiti[haiti$Class == "Blue Tarp", 2:4], main = "Blue Tarp Only")
+
+```
+By exploring the relationship between different variables using the pairwise plots for both the full data set and only the "Blue Tarp" values, it can be observed that:
+
+- There is generally (full data set) a positive relationship between Red, Blue, and Green. This intuitively can be interpreted as brightness.
+
+- Looking only at Blue Tarp data, there remains a positive relationship, however Red and Green appear to possess a linear relationship while Blue is skewed above both Red and Green. This intuitively can be interpreted as observing the blue color, or "blueness", as associated with a "Blue Tarp".
+
+- It appears beneficial to reclassify the Classes to "found" blue tarp and "not found" blue tarp (1 and 0).
+
+## Exploratory Data Analysis - Implementation of "found" variable
+We create a new categorization called "found" with possible values of 0 or 1. A value of 0 indicates that the object is not a "Blue Tarp", while a value of 1 indicates that the Class is a "Blue Tarp". Note that only 3.3% of observations are "Blue Tarps".
+```{r found variable}
+#Create Dummy Variable - "Found"
+haiti$found <- as.numeric(haiti$Class=="Blue Tarp")
+haiti$found <- as.factor(haiti$found)
+summary(haiti)
+head(haiti)
+```
+
+## Exploratory Data Analysis - Logistic Regression
+```{r exploratory logistic regression}
+#Exploratory Logistic Regression
+#Note: observe complete separation with inclusion of all RBG variables
+glm.fit.expl <- glm(found ~ Red + Blue+ Green, family = binomial, data=haiti)
+summary(glm.fit.expl)
+```
+Performing basic logistic regression using the three predictors (Red, Green, Blue), we find that complete separation occurs within the data. This indicates that Blue Tarps are well separated from other Classes, though logistic regression may have difficulty in fitting coefficients.
+
+Additionally, we see that Blue has a positive coefficient, while Red and Green are negative. This is intuitive, as a blue observation is likely to indicate a Blue Tarp. Additionally the magnitude of the Blue coefficient is roughly the magnitude of Red plus Green.
+
+It was previously observed that "blueness" is a strong indicator of a Blue Tarp. While transformations were considered to represent this observation, such as (i) Blue above the max of Red or Green; (ii) Blue above the average of Red and Green; and (iii) Subtracting the average and/or minimum of all three colors from each value of Red, Blue, and Green (to effectively account for brightness); the basic logistic regression fit indicates that these transformations may be unnecessary.
+
+## Exploratory Data Analysis - Data Visualization
+3D plots were created including (i) all Classes and (ii) "found" to further explore complete separation within the data set.
+```{r plotly, warning=FALSE}
+#3D Scatter Plot to further explore separation
+fig1 <- plot_ly(haiti, x=~Red, y=~Green, z=~Blue, color=~Class)
+fig1 <- fig1 %>% add_markers()
+fig1
+
+#3D Scatter Plot to further explore separation
+fig2 <- plot_ly(haiti, x=~Red, y=~Green, z=~Blue, color=~found)
+fig2 <- fig2 %>% add_markers()
+fig2
+
+```
+We observe that Blue Tarps correspond with observations that are more Blue than Red and/or Green, thus lying above the Blue = Red = Green plane (this is a visual approximation). We also observe some potential nonlinearity in the data, which is subsequently explored in logistic regression and penalized logistic regression.
+
+# Model Overview & Setup
+
+The following models are evaluated using 10-fold cross validation:
+
+- Logistic Regression
+
+- LDA (Linear Discriminant Analysis)
+
+- QDA (Quadratic Discriminant Analysis)
+
+- KNN (K-nearest neighbors)
+
+- Penalized Logistic Regression
+
+- Random Forest
+
+- Support Vector Machine
+
+## Model Evaluation
+
+### Context
+Given the context of the problem, identifying Blue Tarps (displaced people) is of extremely high importance. This translates to the ability to save lives and prevent suffering. The obvious objective is to maximize the true positive rate within real world constraints. As the threshold is adjusted to increase the number of true positives, the number of false positives will increase which will have some associated cost.
+
+During the training phase, I assume that a precision of approximately 80% is acceptable, or roughly 1 in 5 predicted positives being false. A loss function was created and fit empirically to generally align with these assumptions. In practice, the validity of this assumption would depend on implementation and require additional context. If someone can quickly check an appropriate aerial photograph before sending supplies, the cost of a false positive is minimal. However, if supplies are airdropped or otherwise transported to each predicted positive, the cost of a false positive is obviously higher.
+
+In balancing the true positive rate (predicted positives / total positive observations) to catch every blue tarp with precision (the percentage of positive predictions that are actually right), not only did I evaluate absolute values, but also where significant trade-offs are made between the two (i.e. the derivatives of each).
+
+### Process
+Most models were evaluated with a two step evaluation process (though while a threshold was selected for each model, not every model possessed another tuning parameter). The first step involves optimizing a tuning parameter/set of tuning parameters and the second involves setting a threshold to balance the true positive rate with the precision. The first step in model evaluation focuses largely on AUROC which measures the balance of sensitivity/true positive rate with specificity/false positive rate (FPR = 1 - specificity). A high false positive rate will decrease the precision (TP / TP + FP). The rationale for focusing on AUROC is simply that if a value of 1 is obtained, the model can achieve a true positive rate of 1 and a false positive rate of 0.  
+
+The first step, tuning parameter selection, was performed using cross validation and a threshold of 0.5 (optimizing accuracy). Again, while accuracy was observed, the primary metric used for evaluation was AUROC. After tuning parameters for a model were selected, the threshold was selected using cross validation. This is partially subjective with the primary considerations being: true positive rate, precision, and the derivative of both values. A loss function was also created and used as part of the decision making process, though not the entirety of the process. This function was fit empirically to generally align with the expected objectives and constraints highlighted previously (maximizing TPR while maintaining a precision of 80%) for the better performing models (specifically omitting LDA and QDA). The loss function was defined simply as:
+
+$$Loss = FalsePositives + 5*FalseNegatives$$
+
+Additionally, once an optimal threshold value was selected, the tuning parameters were re-evaluated using this value, rather than 0.5. This did not return any significantly differing results and in the interest of brevity the results are not presented below.
+
+### Cross Validation
+10-fold cross validation was implemented to measure AUROC, Accuracy, True Positive Rate, False Positive Rate, Precision, and the previously described Loss Function. For a given tuning parameter or threshold, the out of sample predictions were aggregated for each fold and the associated calculations/measurements were performed on the single aggregated data set. This is equivalent to a weighted average (based on number of observations) applied to each measure.
+
+## Model Set Up
+
+### Set Up - Cross Validation
+Cross validation is implemented in each of the models utilizing the following code, which divides the data set into 10 folds.
+```{r Setup Cross Validation}
+# Number of folds; utilized in Cross Validation for loops
+K = 10
+# Number of observations
+n = nrow(haiti) 
+
+# Split data into K = Groups (each K should have unique sets of rows)
+set.seed(215)
+fold = sample(rep(1:K, length.out=n, each=1), replace = FALSE)
+
+```
+
+### Set Up - Record Results
+In evaluating each of the models, we essentially evaluate the area under the ROC curve (AUROC) and attributes associated with the corresponding confusion table. The following functions (i) aggregate the out of sample performance of each observation and (ii) performance the evalution calculations.
+```{r Setup Record Results}
+# Function to aggregate out of sample results from each CV fold
+## Input is the actual y value, fold, predicted probability, and predicted classification
+## Output is dataframe corresponding to each observation in the fold
+fold_results = function (found, i, prob, pred){
+    
+    cvresults.k = data.frame(found)
+    cvresults.k[, 'fold'] = i
+    cvresults.k[, 'prob'] = prob
+    cvresults.k[, 'pred'] = pred
+    colnames(cvresults.k) <- c("found", "fold", "prob", "pred")
+    
+    return(cvresults.k)
+}
+
+# Function to Record CV Results 
+## Output is a single row of complete results for the given model & tuning parameters/threshold
+get_results = function (j, model_name, tuning, yvalues, predictedvalues, threshold, confusion) {
+    
+    #AUROC
+    roc_obj <- roc(yvalues, predictedvalues, levels = levels(as.factor(haiti$found)),
+                   direction = "<", plot=FALSE, quiet = TRUE)
+    auroc <- roc_obj$auc
+    
+    #Accuracy = True Positive + True Negative / Total Predictions; (TP + TN) / (TP + TN + FP + FN)
+    accuracy <- (confusion[2,2] + confusion[1,1]) / 
+      (confusion[1,1] + confusion[1,2] + confusion[2,1] + confusion[2,2])
+
+    #TPR (Sensitivity) = True Positives / Total Actual Positive Observations; TP / (TP + FN)
+    TPR <- confusion[2,2] / (confusion[2,2] + confusion[1,2])
+    
+    #FPR = False Positives / Total Actual Negative Observations; FP / (TP + TN)
+    FPR <- confusion[2, 1] / (confusion[1,1] + confusion[2,1])
+    
+    #Precision = True Positive / Total # Predicted Positive; TP / (TP + FP)
+    precision <- confusion[2,2] / (confusion[2,2] + confusion[2,1])
+    
+    #Calculate Loss
+    FP = confusion[2,1]
+    FN = confusion[1,2]
+    loss = FP + 5 * FN
+    
+    results.row <- c(j, model_name, tuning, auroc, threshold, accuracy, TPR, FPR, precision, loss)
+
+    return(results.row)
+}
+
+```
+
+### Set Up - Print Summary Highlights
+```{r Setup Print Output}
+#Function to Display Table & Charts for Choosing Optimal Tuning Parameters
+summary_tuning_parameter = function (summarydatatable) {
+  
+  #AUROC vs. Tuning Parameter
+  auroc.plot <- ggplot(summarydatatable, aes(x=Tuning, y=AUROC))+
+    geom_point(shape=19, size = 3, color = "black") +
+    ggtitle(paste(summarydatatable[1, "Model"], "\n  AUROC vs. Tuning Parameter"))+
+    theme_classic(base_size = 14) +
+    theme(plot.title = element_text(hjust =.5))+
+    labs(x = "Tuning Parameter", y = "AUROC")
+  print(auroc.plot)
+  
+  #Accuracy vs. Tuning Parameter
+  accuracy.plot <- ggplot(summarydatatable, aes(x=Tuning, y=Accuracy))+
+    geom_point(shape=19, size = 3, color = "black") +
+    ggtitle(paste(summarydatatable[1, "Model"], "\n  Accuracy vs. Tuning Parameter"))+
+    theme_classic(base_size = 14) +
+    theme(plot.title = element_text(hjust =.5))+
+    labs(x = "Tuning Parameter", y = "Accuracy")
+  print(accuracy.plot)
+}
+
+#Function to Display Table & Charts for Selecting Threshold
+summary_threshold = function (summarydatatable){
+  
+  #TPR vs. Threshold
+  tpr.plot <- ggplot(summarydatatable, aes(x=Threshold, y=TPR))+
+    geom_point(shape=19, size = 3, color = "black") +
+    ggtitle(paste(summarydatatable[1, "Model"], "\n  True Pos. Rate vs. Threshold"))+
+    theme_classic(base_size = 14) +
+    theme(plot.title = element_text(hjust =.5))+
+    labs(x = "Threshold", y = "True Positive Rate")
+  print(tpr.plot)
+
+  #Precision vs. Threshold
+  precision.plot <- ggplot(summarydatatable, aes(x=Threshold, y=Precision))+
+    geom_point(shape=19, size = 3, color = "black") +
+    ggtitle(paste(summarydatatable[1, "Model"], "\n  Precision vs. Threshold"))+
+    theme_classic(base_size = 14) +
+    theme(plot.title = element_text(hjust =.5))+
+    labs(x = "Threshold", y = "Precisioon")
+  print(precision.plot)
+
+  #Loss vs. Threshold
+  loss.plot <- ggplot(summarydatatable, aes(x=Threshold, y=Loss))+
+    geom_point(shape=19, size = 3, color = "black") +
+    ggtitle(paste(summarydatatable[1, "Model"], "\n  Loss vs. Threshold"))+
+    theme_classic(base_size = 14) +
+    theme(plot.title = element_text(hjust =.5))+
+    labs(x = "Threshold", y = "Loss")
+  print(loss.plot)
+}
+
+#Print Summary Table
+summary_table = function(summarydatatable){
+  summarydatatable %>%
+  kbl(caption = "Summary Table: 10-Fold Cross Validation") %>%
+  kable_classic(full_width = F)
+}
+
+#Print optimal Threshold
+opt_threshold = function(summarydatatable) {
+  summarydatatable %>%
+  kbl(caption = "Optimal Threshold Selection") %>%
+  kable_classic(full_width = F)
+}
+
+```
+
+### Set Up - Additional Frequently Used Code
+Several miscellaneous functions were created in order to streamline the use of code used frequently across the different models.
+```{r Setup Additional Code}
+datacolnames <- c("parameter_it", "Model", "Tuning", "AUROC", "Threshold", 
+                  "Accuracy", "TPR", "FPR", "Precision", "Loss")
+datacolnumber <- 10
+
+## Create empty array for data
+create_data_table = function (j.min, j.max) {
+  out.table = data.frame(matrix(data=NA, nrow = K*(j.max-j.min+1), ncol = datacolnumber))
+  colnames(out.table) <- datacolnames
+  return (out.table)
+}
+
+# Create empty array for summary of calculations (over K-Fold Cross Validation)
+create_summary_table = function (j.max) {
+  out.table = data.frame(matrix(data=NA, nrow = j.max, ncol = datacolnumber))
+  colnames(out.table) <- datacolnames
+  return(out.table)
+}
+
+#Function to ensure that appropriate columns are of numeric type
+ensure_numeric = function(datatable){
+  out.table <- data.frame(sapply(datatable[, 1], as.numeric), datatable[, 2], 
+                          sapply(datatable[, 3:10], as.numeric))
+  colnames(out.table) <- datacolnames
+  return(out.table)
+}
+
+```
+
+# Model Training
+
+## Logistic Regression: Overview
+Logistic regression is typically not associated with a tuning parameter. However, given the initial observations in the exploratory data analysis that tarps correspond to "blueness" and that the relationships may not be nonlinear, within logistic regression the following relationship was explored: 
+
+ $$ln( P / (1-P)) = \beta_{0} + \beta_{Red}Red + \beta_{Green}Green + \beta_{Blue,1}Blue + \beta_{Blue,2}Blue^2 + ... +\beta_{Blue,l}Blue^l$$
+
+where l is a tuning parameter. 
+
+This nonlinear relationship is explored further in penalized logistic regression with higher degree polynomials for Green and Red also evaluated.
+
+### Logistic Regression: Tuning Parameter Optimization (Polynomial, l)
+Cross validation was used to select the optimal tuning parameter, l, the polynomial degree related to Blue.
+```{r Logistic Regression Tuning, warning=FALSE}
+
+model.name = "Logistic Regression"
+threshold = 0.5 #Constant threshold while evaluating polynomial
+
+# j - Used for optimal threshold
+j.min = 1 
+j.max = 6
+
+# Create empty dataframe for data
+summary.results <- create_summary_table(j.max)
+
+cvresults <- data.frame(matrix(data=NA, ncol = 4))
+colnames(cvresults) <- c("found", "fold", "prob", "pred")
+
+# Iterating Cutoff/Threshold Values 
+for (j in j.min:j.max) {
+  polynomial = j
+  
+  # K-Fold Cross Validation - Iterating Folds
+  for (i in 1:K) {
+    
+    # Assign data appropriately for current fold
+    k.test = which(fold == i)
+    k.train = which(fold != i)
+    testdata = haiti[k.test, ]
+    traindata = haiti[k.train, ]
+    
+    # Fit Model
+    glm.fit <- glm(found~Red+poly(Blue, polynomial)+Green, 
+                   family = binomial, data = traindata)
+    
+    # Test Model
+    ## Get Probabilities
+    glm.fit.prob = predict(glm.fit, testdata, type = "response")
+    
+    ## Table of Predictions (based on threshold)
+    glm.fit.pred = rep(0, nrow(testdata))
+    glm.fit.pred[glm.fit.prob > threshold] = 1
+    
+    # Record Results
+    ## Compile Results from Current Fold
+    cvresults.k <- fold_results(testdata$found, i, glm.fit.prob, glm.fit.pred)
+    
+    ## Aggregate All CV Results
+    cvresults <- rbind(cvresults, cvresults.k)
+    
+    ## Remove all rows in temporary table
+    cvresults.k <- cvresults.k[0,] 
+    
+  }
+  
+  #Remove N/A rows
+  cvresults <- cvresults %>% 
+    filter(!is.na(cvresults$fold))
+  
+  #Calculate Confusion Table
+  confusion <- table(cvresults$pred, cvresults$found)
+  
+  #Record Results
+  summary.results[j, ] <- as.list(get_results(j, model.name, polynomial, cvresults$found, 
+                                              cvresults$prob, threshold, confusion))
+
+  #Remove all rows in temporary table
+  cvresults <- cvresults[0,] 
+}
+
+# Summarize Results
+## Ensure data type is numeric
+summary.results <- ensure_numeric(summary.results)
+## Record Summary Results
+log.tuning.results <- summary.results
+
+# Output Summary Results
+summary_tuning_parameter(summary.results)
+summary_table(summary.results)
+```
+
+Based upon the observed data (specifically AUROC, Accuracy, TPR, and Precision in order), $l = 3$ was selected as the appropriate tuning parameter. While higher degree polynomials do improve the corresponding evaluation criterion, high degree polynomials introduce the risk of overfitting.
+
+
+### Logistic Regression: Threshold Selection
+Employing the chosen tuning parameter $l = 3$, cross validation was employed to select an appropriate threshold.
+```{r Logistic Regression Threshold, warning=FALSE}
+
+model.name = "Logistic Regression"
+
+# j - Used for optimal threshold
+j.min = 1 
+j.max = 10
+
+#Choice of Tuning Parameters
+polynomial = 3 
+threshold = 0.5 #Initial, prior to iteration
+
+# Create empty dataframe for data
+summary.results <- create_summary_table(j.max)
+
+cvresults <- data.frame(matrix(data=NA, ncol = 4))
+colnames(cvresults) <- c("found", "fold", "prob", "pred")
+
+# K-Fold Cross Validation - Iterating Folds
+for (i in 1:K) {
+  
+  # Assign data appropriately for current fold
+  k.test = which(fold == i)
+  k.train = which(fold != i)
+  testdata = haiti[k.test, ]
+  traindata = haiti[k.train, ]
+  
+  # Fit Model
+  glm.fit <- glm(found~Red+poly(Blue, polynomial)+Green, 
+                 family = binomial, data = traindata)
+  
+  # Test Model
+  ## Get Probabilities
+  glm.fit.prob = predict(glm.fit, testdata, type = "response")
+  
+  ## Table of Predictions (based on threshold)
+  glm.fit.pred = rep(0, nrow(testdata))
+  glm.fit.pred[glm.fit.prob > threshold] = 1
+  
+  # Record Results
+  ## Compile Results from Current Fold
+  cvresults.k <- fold_results(testdata$found, i, glm.fit.prob, glm.fit.pred)
+  
+  ## Aggregate All CV Results
+  cvresults <- rbind(cvresults, cvresults.k)
+  
+  ## Remove all rows in temporary table
+  cvresults.k <- cvresults.k[0,] 
+  
+}
+#Remove N/A rows
+cvresults <- cvresults %>% 
+  filter(!is.na(cvresults$fold))
+
+# Iterating Cutoff/Threshold Values 
+for (j in j.min:j.max) {
+  threshold = .025*j
+  
+  ## Table of Predictions (based on threshold)
+  glm.fit.pred = rep(0, nrow(cvresults))
+  glm.fit.pred[cvresults$prob > threshold] = 1
+  
+  #Calculate Confusion Table
+  confusion <- table(glm.fit.pred, cvresults$found)
+  
+  #Record Results
+  summary.results[j, ] <- as.list(get_results(j, model.name, polynomial, cvresults$found, 
+                                              cvresults$prob, threshold, confusion))
+}
+
+# Summarize Results
+## Ensure data type is numeric
+summary.results <- ensure_numeric(summary.results)
+## Record Summary Results
+log.threshold.results <- summary.results
+
+# Output Summary Results
+summary_threshold(summary.results)
+summary_table(summary.results)
+
+#Optimal Threshold
+best.thresh = summary.results[summary.results$Loss == min(summary.results[, "Loss"]), ]
+opt_threshold(best.thresh)
+
+#Save data for optimal threshold - used in AUROC
+## Set Threshold
+threshold = best.thresh[1, "Threshold"]
+## Table of Predictions (based on threshold)
+glm.fit.pred = rep(0, nrow(cvresults))
+glm.fit.pred[cvresults$prob > threshold] = 1
+## Add to cvresults
+cvresults$pred <- glm.fit.pred
+## Save for later use
+log.fullpredictions <- cvresults
+## Remove all rows in temporary table
+cvresults <- cvresults[0,] 
+```
+
+
+The threshold of $\lambda$ = .125 was selected for the optimal logistic regression model. $\lambda$ = .10 possesses a slightly higher true positive rate, however the marked decline in false positive rate and corresponding increase in precision justifies the slightly lower TPR. 
+
+The final logistic regression model incorporates a $Blue^3$ term and utilizes $\lambda$ = 0.125 as its threshold for categorizing an observation as "found" or the prediction of a "Blue Tarp".
+
+
+
+## LDA: Overview
+Linear Discriminant Analysis does not possess any tuning parameters that require optimization. Threshold was selected in order to maximize the true positive rate while balancing precision.
+
+### LDA: Threshold Selection
+The threshold was selected using cross validation.
+
+```{r LDA Threshold, warning=FALSE}
+
+model.name = "LDA"
+
+# j - Used for optimal threshold
+j.min = 1 
+j.max = 20
+
+#Choice of Tuning Parameters
+threshold = 0.5 #Initial, prior to iteration
+
+# Create empty dataframe for data
+summary.results <- create_summary_table(j.max)
+
+cvresults <- data.frame(matrix(data=NA, ncol = 4))
+colnames(cvresults) <- c("found", "fold", "prob", "pred")
+
+# K-Fold Cross Validation - Iterating Folds
+for (i in 1:K) {
+  
+  # Assign data appropriately for current fold
+  k.test = which(fold == i)
+  k.train = which(fold != i)
+  testdata = haiti[k.test, ]
+  traindata = haiti[k.train, ]
+  
+  # Fit Model
+  lda.fit <- lda(found~Red+Blue+Green, data = traindata)
+  
+  # Test Model
+  ## Probability - Note: first column corresponds to p(found = 0), 
+  ### second column corresponds to p(found = 1)
+  lda.predictprob = predict(lda.fit, newdata=testdata)
+  
+  ## Predicted Value - see note above
+  lda.predictval <- lda.predictprob$posterior[, 2]>=threshold 
+  
+  # Record Results
+  ## Compile Results from Current Fold
+  cvresults.k <- fold_results(testdata$found, i, lda.predictprob$posterior[, 2], lda.predictval)
+  
+  ## Aggregate All CV Results
+  cvresults <- rbind(cvresults, cvresults.k)
+  
+  ## Remove all rows in temporary table
+  cvresults.k <- cvresults.k[0,] 
+  
+}
+#Remove N/A rows
+cvresults <- cvresults %>% 
+  filter(!is.na(cvresults$fold))
+
+# Iterating Cutoff/Threshold Values 
+for (j in j.min:j.max) {
+  threshold = .025*j
+  
+  ## Predicted Value - see note above
+  lda.predictval <- cvresults$prob>=threshold 
+  
+  #Calculate Confusion Table
+  confusion <- table(lda.predictval, cvresults$found)
+  
+  #Record Results
+  summary.results[j, ] <- as.list(get_results(j, model.name, 0, cvresults$found, 
+                                              cvresults$prob, threshold, confusion))
+}
+
+# Summarize Results
+## Ensure data type is numeric
+summary.results <- ensure_numeric(summary.results)
+## Record Summary Results
+lda.threshold.results <- summary.results
+
+# Output Summary Results
+summary_threshold(summary.results)
+summary_table(summary.results)
+
+#Optimal Threshold
+best.thresh = summary.results[summary.results$Loss == min(summary.results[, "Loss"]), ]
+opt_threshold(best.thresh)
+
+#Save data for optimal threshold - used in AUROC
+## Set Threshold
+threshold = best.thresh[1, "Threshold"]
+## Table of Predictions (based on threshold)
+glm.fit.pred = rep(0, nrow(cvresults))
+glm.fit.pred[cvresults$prob > threshold] = 1
+## Add to cvresults
+cvresults$pred <- glm.fit.pred
+## Save for later use
+lda.fullpredictions <- cvresults
+## Remove all rows in temporary table
+cvresults <- cvresults[0,] 
+```
+
+A threshold of $\lambda$ = 0.075 was selected for LDA. While this does not actually satisfy the previously stated criterion of precision values of at least ~80%, the loss function was prioritized in selection for consistency in comparison with other models. The corresponding true positive rate and precision for this model appear sub-optimal.
+
+## QDA: Overview
+Similar to LDA, Quadratic Discriminant Analysis does not require the optimization of any tuning parameters. Again, threshold was explored in detail and selected to maximize the true positive rate within some reasonable precision bound.
+
+### QDA: Threshold Selection
+The threshold was selected using cross validation.
+
+```{r QDA Threshold, warning=FALSE}
+
+model.name = "QDA"
+
+# j - Used for optimal threshold
+j.min = 1 
+j.max = 10
+
+#Choice of Tuning Parameters
+threshold = 0.5 #Initial, prior to iteration
+
+# Create empty dataframe for data
+summary.results <- create_summary_table(j.max)
+
+cvresults <- data.frame(matrix(data=NA, ncol = 4))
+colnames(cvresults) <- c("found", "fold", "prob", "pred")
+
+# K-Fold Cross Validation - Iterating Folds
+for (i in 1:K) {
+  
+  # Assign data appropriately for current fold
+  k.test = which(fold == i)
+  k.train = which(fold != i)
+  testdata = haiti[k.test, ]
+  traindata = haiti[k.train, ]
+  
+  # Fit Model
+  qda.fit <- qda(found~Red+Blue+Green, data = traindata)
+  
+  # Test Model
+  ## Probability - Note: first column corresponds to p(found = 0), 
+  ### second column corresponds to p(found = 1)
+  qda.predictprob = predict(qda.fit, testdata)
+  
+  ## Predicted Value - see note above
+  qda.predictval <- qda.predictprob$posterior[, 2]>=threshold
+  
+  # Record Results
+  ## Compile Results from Current Fold
+  cvresults.k <- fold_results(testdata$found, i, qda.predictprob$posterior[, 2], qda.predictval)
+  
+  ## Aggregate All CV Results
+  cvresults <- rbind(cvresults, cvresults.k)
+  
+  ## Remove all rows in temporary table
+  cvresults.k <- cvresults.k[0,] 
+  
+}
+#Remove N/A rows
+cvresults <- cvresults %>% 
+  filter(!is.na(cvresults$fold))
+
+# Iterating Cutoff/Threshold Values 
+for (j in j.min:j.max) {
+  threshold = .025*j
+  
+  ## Predicted Value - see note above
+  qda.predictval <- cvresults$prob>=threshold 
+  
+  #Calculate Confusion Table
+  confusion <- table(qda.predictval, cvresults$found)
+  
+  #Record Results
+  summary.results[j, ] <- as.list(get_results(j, model.name, 0, cvresults$found, 
+                                              cvresults$prob, threshold, confusion))
+}
+
+# Summarize Results
+## Ensure data type is numeric
+summary.results <- ensure_numeric(summary.results)
+## Record Summary Results
+qda.threshold.results <- summary.results
+
+# Output Summary Results
+summary_threshold(summary.results)
+summary_table(summary.results)
+
+#Optimal Threshold
+best.thresh = summary.results[summary.results$Loss == min(summary.results[, "Loss"]), ]
+opt_threshold(best.thresh)
+
+#Save data for optimal threshold - used in AUROC
+## Set Threshold
+threshold = best.thresh[1, "Threshold"]
+## Table of Predictions (based on threshold)
+glm.fit.pred = rep(0, nrow(cvresults))
+glm.fit.pred[cvresults$prob > threshold] = 1
+## Add to cvresults
+cvresults$pred <- glm.fit.pred
+## Save for later use
+qda.fullpredictions <- cvresults
+## Remove all rows in temporary table
+cvresults <- cvresults[0,] 
+```
+
+Selecting a threshold of $\lambda$ = 0.05 minimizes the loss function. While the associated precision is less than 80%, this value was selected for consistency in comparison to other models.
+
+## KNN: Overview
+K-Nearest Neighbors requires picking an optimal value of k (number of neighbors) using cross validation. Specifically, k is the tuning parameter within KNN. After this was completed, a threshold was selected in order to maximize the true positive rate while maintaining a reasonable precision. Of note each of the k neighbors effectively casts a vote on the prediction, so thresholds were explored corresponding to a number of votes (neighbors with a value "found").
+
+### KNN: Optimizing k
+Only odd values of k were considered, which have no "tie vote" situations. During exploratory analysis several wider, less dense ranges of k were analyzed. The results below highlight a more dense range with the optimal value of k observed.
+
+```{r KNN Tuning, warning=FALSE}
+
+model.name = "KNN"
+threshold = 0.5 #Constant threshold while evaluating polynomial
+
+# j - Used to iterate over k 
+# k = 23 + 2*j (j=1 to 25 iterates over k = 53)
+j.min = 1 
+j.max = 15 
+
+# Create empty dataframe for data
+summary.results <- create_summary_table(j.max)
+
+cvresults <- data.frame(matrix(data=NA, ncol = 4))
+colnames(cvresults) <- c("found", "fold", "prob", "pred")
+
+# Iterating Cutoff/Threshold Values 
+for (j in j.min:j.max) {
+  knum <- 23 + 2*j
+  
+  # K-Fold Cross Validation - Iterating Folds
+  for (i in 1:K) {
+    
+    # Assign data appropriately for current fold
+    k.test = which(fold == i)
+    k.train = which(fold != i)
+    testdata = haiti[k.test, ]
+    traindata = haiti[k.train, ]
+    
+    # Fit Model, obtain predictions
+    train.x <- traindata[, c("Blue", "Red", "Green")] %>% as.matrix()
+    test.x <- testdata[, c("Blue", "Red", "Green")] %>% as.matrix()
+    train.y <- traindata$found %>% as.matrix()
+
+    knn.model <- knn(train.x, test.x, train.y, k = knum, prob = TRUE)
+
+    
+    # Test Model
+    ## Obtain Probabilities
+    ## Note: kresults$probability results in the probability of the predicted value; 
+    ### not p(found), which is required to optimize threshold
+    ## Calculate: if(found), then kresults$probability; 
+    ### else 1-kresults$probability (specifically, p(found))
+    
+    ### Create probability table
+    kresults <- data.frame(knn.model, attr(knn.model, "prob"))
+    colnames(kresults) <- c("prediction", "probability")
+    ### If found, record probability
+    kresults$p1 <- rep(0, nrow(kresults))
+    kresults[kresults$prediction == 1, "p1"] <- kresults[kresults$prediction == 1, "probability"]
+    ### If not found, record 1-probability (this is p(found))
+    kresults$p2 <- rep(0, nrow(kresults))
+    kresults[kresults$prediction == 0, "p2"] <- 1 - kresults[kresults$prediction == 0, "probability"]
+    ### Take max value (column values were initially set to zero)
+    kresults$prob_found <- apply(kresults[, 3:4], 1, max)
+    ### Set to "clean" variable for reference
+    knn.prob <- kresults$prob_found
+    
+    ### Obtain Predictions (for variable thresholds)
+    ### Note: for threshold of 0.5, original fit is sufficient
+    ### Column to record predictions based upon a variable threshold
+    kresults$thresh.pred <- rep(0, nrow(kresults)) 
+    kresults[kresults$prob_found > threshold, "thresh.pred"] <- 1
+    knn.predictions <- kresults$thresh.pred
+
+    
+    # Record Results
+    ## Compile Results from Current Fold
+    cvresults.k <- fold_results(testdata$found, i, knn.prob, knn.predictions)
+    
+    ## Aggregate All CV Results
+    cvresults <- rbind(cvresults, cvresults.k)
+    
+    ## Remove all rows in temporary table
+    cvresults.k <- cvresults.k[0,] 
+    
+  }
+  
+  #Remove N/A rows
+  cvresults <- cvresults %>% 
+    filter(!is.na(cvresults$fold))
+  
+  #Calculate Confusion Table
+  confusion <- table(cvresults$pred, cvresults$found)
+  
+  #Record Results
+  summary.results[j, ] <- as.list(get_results(j, model.name, knum, cvresults$found, 
+                                              cvresults$prob, threshold, confusion))
+
+  #Remove all rows in temporary table
+  cvresults <- cvresults[0,] 
+}
+
+# Summarize Results
+## Ensure data type is numeric
+summary.results <- ensure_numeric(summary.results)
+## Record Summary Results
+knn.tuning.results <- summary.results
+
+# Output Summary Results
+summary_tuning_parameter(summary.results)
+summary_table(summary.results)
+```
+Based upon the observed AUROC values, $k = 37$ was selected as the optimal tuning parameter. While there appears to be a significant shift in AUROC around k = 37, the y-axis is zoomed in very tightly and it does not appear as pronounced with wider ranges of k. 
+
+Wider, less dense, ranges of k indicate an increase in AUROC up to ~ $k = 20$, a gradual decrease, a subsequent increase around $k = 37$, followed by a gradual decrease in AUROC with increasing k for all remaining k values.  
+
+Of note, by selecting a k value of $k = 37$ we picked a relatively inflexible model (flexibility increases with decreasing k).
+
+### KNN: Threshold Selection
+To make a prediction, KNN effectively selects the values of the k nearest points and treats each value as a vote. In this case $k = 37$ was selected, so each prediction involves obtaining the values ("Blue Tarp" or "Not Blue Tarp") of the 37 nearest points from the training set and counting the votes. KNN typically follows "majority rules" or a threshold of 0.5. In the following analysis we evaluate threshold corresponding to the number of votes, specifically 1/37 = 0.027,  2/7 = .054,  3/37 = 0.081 ...
+
+
+```{r KNN Threshold, warning=FALSE}
+
+model.name = "KNN"
+
+# j - Used for optimal threshold
+j.min = 1 
+j.max = 10
+
+#Choice of Tuning Parameters
+knum = 37 
+threshold = 0.5 #Initial, prior to iteration
+
+# Create empty dataframe for data
+summary.results <- create_summary_table(j.max)
+
+cvresults <- data.frame(matrix(data=NA, ncol = 4))
+colnames(cvresults) <- c("found", "fold", "prob", "pred")
+
+# K-Fold Cross Validation - Iterating Folds
+for (i in 1:K) {
+  
+  # Assign data appropriately for current fold
+  k.test = which(fold == i)
+  k.train = which(fold != i)
+  testdata = haiti[k.test, ]
+  traindata = haiti[k.train, ]
+  
+  # Fit Model, obtain predictions
+  train.x <- traindata[, c("Blue", "Red", "Green")] %>% as.matrix()
+  test.x <- testdata[, c("Blue", "Red", "Green")] %>% as.matrix()
+  train.y <- traindata$found %>% as.matrix()
+
+  knn.model <- knn(train.x, test.x, train.y, k = knum, prob = TRUE)
+  
+  # Test Model
+  ## Obtain Probabilities
+  ## Note: kresults$probability results in the probability of the predicted value; 
+  ### not p(found), which is required to optimize threshold
+  ## Calculate: if(found), then kresults$probability; 
+  ### else 1-kresults$probability (specifically, p(found))
+  
+  ### Create probability table
+  kresults <- data.frame(knn.model, attr(knn.model, "prob"))
+  colnames(kresults) <- c("prediction", "probability")
+  ### If found, record probability
+  kresults$p1 <- rep(0, nrow(kresults))
+  kresults[kresults$prediction == 1, "p1"] <- kresults[kresults$prediction == 1, "probability"]
+  ### If not found, record 1-probability (this is p(found))
+  kresults$p2 <- rep(0, nrow(kresults))
+  kresults[kresults$prediction == 0, "p2"] <- 1 - kresults[kresults$prediction == 0, "probability"]
+  ### Take max value (column values were initially set to zero)
+  kresults$prob_found <- apply(kresults[, 3:4], 1, max)
+  ### Set to "clean" variable for reference
+  knn.prob <- kresults$prob_found
+  
+  ### Obtain Predictions (for variable thresholds)
+  ### Note: for threshold of 0.5, original fit is sufficient
+  #### Column to record predictions based upon a variable threshold
+  kresults$thresh.pred <- rep(0, nrow(kresults)) 
+  #### #Note: set to >= given the vote counting context
+  kresults[kresults$prob_found >= threshold, "thresh.pred"] <- 1 
+  knn.predictions <- kresults$thresh.pred
+  
+  # Record Results
+  ## Compile Results from Current Fold
+  cvresults.k <- fold_results(testdata$found, i, knn.prob, knn.predictions)
+  
+  ## Aggregate All CV Results
+  cvresults <- rbind(cvresults, cvresults.k)
+  
+  ## Remove all rows in temporary table
+  cvresults.k <- cvresults.k[0,] 
+  
+}
+#Remove N/A rows
+cvresults <- cvresults %>% 
+  filter(!is.na(cvresults$fold))
+
+# Iterating Cutoff/Threshold Values 
+for (j in j.min:j.max) {
+  threshold = (1/knum)*j
+  
+  ## Table of Predictions (based on threshold)
+  knn.pred = rep(0, nrow(cvresults))
+  knn.pred[cvresults$prob > threshold] = 1
+
+  #Calculate Confusion Table
+  confusion <- table(knn.pred, cvresults$found)
+  
+  #Record Results
+  summary.results[j, ] <- as.list(get_results(j, model.name, knum, cvresults$found, 
+                                              cvresults$prob, threshold, confusion))
+}
+
+# Summarize Results
+## Ensure data type is numeric
+summary.results <- ensure_numeric(summary.results)
+## Record Summary Results
+knn.threshold.results <- summary.results
+
+# Output Summary Results
+summary_threshold(summary.results)
+summary_table(summary.results)
+
+#Optimal Threshold
+best.thresh = summary.results[summary.results$Loss == min(summary.results[, "Loss"]), ]
+opt_threshold(best.thresh)
+
+#Save data for optimal threshold - used in AUROC
+## Set Threshold
+threshold = best.thresh[1, "Threshold"]
+## Table of Predictions (based on threshold)
+glm.fit.pred = rep(0, nrow(cvresults))
+glm.fit.pred[cvresults$prob > threshold] = 1
+## Add to cvresults
+cvresults$pred <- glm.fit.pred
+## Save for later use
+knn.fullpredictions <- cvresults
+## Remove all rows in temporary table
+cvresults <- cvresults[0,] 
+```
+
+The loss function is minimized at 5 votes, and $\lambda = 5/37$ votes ($\lambda$ = 0.135) was chosen as the optimal threshold.
+
+
+## Penalized Logistic Regression (ElasticNet): Overview
+Given the nonlinearity observed in the exploratory data analysis and results from logistic regression, which explored polynomial terms of the Blue predictor, penalized logistic regression was was used to evaluate third degree polynomial terms associated with each of the predictors: Red, Blue, and Green. Of note, each predictor already possesses the same units which is a consideration when applying shrinkage techniques.
+
+### Penalized Logistic Regression: Data Set
+For this analysis, a data set was created including up to third degree polynomials associated with each predictor.
+```{r Penalized Logstic Regression Data Set}
+# Create Data Set - Specific to Penalized Logistic Regression: Polynomial 3 for Red, Blue, and Green
+haiti.poly <- data.frame(haiti$found, 
+                         haiti$Red, haiti$Red^2, haiti$Red^3, 
+                         haiti$Blue, haiti$Blue^2, haiti$Blue^3, 
+                         haiti$Green, haiti$Green^2, haiti$Green^3)
+
+colnames(haiti.poly) <- c("found", "Red1", "Red2", "Red3", "Blue", 
+                          "Blue2", "Blue3", "Green1", "Green2", "Green3")
+```
+
+### Penalized Logistic Regression: Tuning Parameters
+Penalized Logistic Regression utilizes two tuning parameters: $\lambda$ and $\alpha$. The value of $\alpha$ dictates the elastic net penalty. A value of  $\alpha$ = 0 corresponds to Ridge Regression, a values of $\alpha$ = 1 corresponds to Lasso Regression, and values of 0 < $\alpha$ = 0 < 1 correspond to Elastic Net regression. Values of $\alpha$ = 0, 0.25, 0.5, 0.75, and 1 were evaluated.
+
+For each value of $\alpha$, a value of tuning parameter $\lambda$ is selected using cross validation. This $\lambda$ value corresponds to the penalty imposed on the magnitude of coefficients. The magnitude of $\lambda\ has no intuitive interpretation and is simply useful in obtaining the best results. Optimal $\lambda$ values were calculated and are presented below, though $\alpha$ is a more useful tuning parameter to interpret.
+
+```{r Penalized Logistic Regression Alpha}
+
+model.name = "Penalized Log Reg"
+threshold = 0.5 #Constant threshold while evaluating (set closer than 0.5 based on observations)
+
+#j - Used for alpha
+j.min = 1 #Used to get K: 2*j-1 (j = 1 ---> k = 1)
+j.max = 5 #Used to get K: 2*j-1 (j = 5 ---> k 9)
+
+# Create empty array for data
+summary.results <- create_summary_table(j.max)
+
+# Create table to record optimal lambda values
+opt.lambda = data.frame(matrix(data=NA, nrow = j.max), ncol = 2)
+colnames(opt.lambda) <- c("Alpha", "Optimal Lambda")
+
+# Iterating Cutoff/Threshold Values 
+for (j in j.min:j.max) {
+  alpha_j <- .25*(j-1)
+
+  # Split x and y
+  x = model.matrix(found~., family = "binomial", haiti.poly)[, -1]
+  y = as.matrix(as.numeric(haiti.poly$found))
+  
+  # Cross Validation to calculate optimal lambda
+  ## Note: "foldid" corresponds to "fold" used in Cross Validation
+  cv.fit = cv.glmnet(x, y, family = "binomial", alpha = alpha_j, foldid = fold)
+  bestlam = cv.fit$lambda.min
+  
+  # Record Optimal Lambda
+  opt.lambda[j, "Alpha"] <- alpha_j
+  opt.lambda[j, "Optimal Lambda"] <- bestlam
+  
+  # K-Fold Cross Validation - Iterating Folds
+    for (i in 1:K) {
+      
+      # Assign data appropriately for current fold
+      k.test = which(fold == i)
+      k.train = which(fold != i)
+      testdata = haiti.poly[k.test, ]
+      traindata = haiti.poly[k.train, ]
+      
+      # Fit Model
+      ## Split x and y
+      x = model.matrix(found~., family = "binomial", traindata)[, -1]
+      y = as.matrix(as.numeric(traindata$found))
+      ## Fit
+      penlogreg = glmnet(x, y, family = "binomial", alpha = alpha_j)
+    
+      # Test Model
+      ## Probabilities
+      x.test= model.matrix(found~., family = "binomial", testdata) [, -1]
+      penal.prob <- predict(penlogreg, newx = x.test, s = bestlam, type = "response")
+      
+      ## Predictions
+      penal.predictions <- ifelse(penal.prob > threshold, 1, 0)
+      
+      ## Must convert to vector from matrix to compute AUC
+      penal.prob <- as.vector(penal.prob) 
+      
+      # Record Results
+      ## Compile Results from Current Fold
+      cvresults.k <- fold_results(testdata$found, i, penal.prob, penal.predictions)
+    
+      ## Aggregate All CV Results
+      cvresults <- rbind(cvresults, cvresults.k)
+    
+      ## Remove all rows in temporary table
+      cvresults.k <- cvresults.k[0,]
+      
+    }
+  
+  #Remove N/A rows
+  cvresults <- cvresults %>% 
+  filter(!is.na(cvresults$fold))
+  
+  #Calculate Confusion Table
+  confusion <- table(cvresults$pred, cvresults$found)
+  
+  #Record Results
+  summary.results[j, ] <- as.list(get_results(j, model.name, alpha_j, cvresults$found, 
+                                              cvresults$prob, threshold, confusion))
+
+  #Remove all rows in temporary table
+  cvresults <- cvresults[0,] 
+}
+
+# Summarize Results
+
+# Summarize Results
+## Ensure data type is numeric
+summary.results <- ensure_numeric(summary.results)
+## Record Summary Results
+penal.tuning.results <- summary.results
+
+# Output Summary Results
+opt.lambda %>%
+  kbl(caption = "Optimal Lambda: 10-Fold Cross Validation") %>%
+  kable_classic(full_width = F)
+summary_tuning_parameter(summary.results)
+summary_table(summary.results)
+```
+
+Based upon the AUROC and Accuracy measurements, the tuning parameter $\alpha$ = 1 was selected. Of note, this corresponds to Lasso Regression.
+
+
+### Penalize Logistic Regression: Threshold Selection
+A threshold was selected based upon cross validation and utilizing the previously selected tuning parameter $\alpha$ = 1.
+```{r Penalized Logistic Regression Threshold}
+
+model.name = "Penalized Log Reg"
+
+# j - Used for optimal threshold
+j.min = 1 #
+j.max = 10 #Explored j.max = 10 (lambda = 0.5); but unnecessary, particularly given run time of glmnet
+
+alpha_j = 1 #Optimal tuning parameter
+
+# Create empty dataframe for data
+summary.results <- create_summary_table(j.max)
+
+cvresults <- data.frame(matrix(data=NA, ncol = 4))
+colnames(cvresults) <- c("found", "fold", "prob", "pred")
+
+
+# Calculate optimal lambda for given alpha
+## Split x and y
+x = model.matrix(found~., family = "binomial", haiti.poly)[, -1]
+y = as.matrix(as.numeric(haiti.poly$found))
+## Calculate optima lambda using cross validation
+cv.fit = cv.glmnet(x, y, family = "binomial", alpha = alpha_j, foldid = fold)
+## Best Lambda for chosen alpha
+bestlam = cv.fit$lambda.min
+
+# K-Fold Cross Validation - Iterating Folds
+for (i in 1:K) {
+  
+  # Assign data appropriately for current fold
+  k.test = which(fold == i)
+  k.train = which(fold != i)
+  testdata = haiti.poly[k.test, ]
+  traindata = haiti.poly[k.train, ]
+  
+  # Fit Model
+  ## Split x and y
+  x = model.matrix(found~., family = "binomial", traindata)[, -1]
+  y = as.matrix(as.numeric(traindata$found))
+  ## Fit
+  penlogreg = glmnet(x, y, family = "binomial", alpha = alpha_j)
+
+  # Test Model
+  ## Probabilities
+  x.test= model.matrix(found~., family = "binomial", testdata) [, -1]
+  penal.prob <- predict(penlogreg, newx = x.test, s = bestlam, type = "response")
+  
+  ## Predictions
+  penal.predictions <- ifelse(penal.prob > threshold, 1, 0)
+  
+  ## Must convert to vector from matrix to compute AUC
+  penal.prob <- as.vector(penal.prob)
+  
+  
+  # Record Results
+  ## Compile Results from Current Fold
+  cvresults.k <- fold_results(testdata$found, i, penal.prob, penal.predictions)
+  
+  ## Aggregate All CV Results
+  cvresults <- rbind(cvresults, cvresults.k)
+  
+  ## Remove all rows in temporary table
+  cvresults.k <- cvresults.k[0,] 
+}
+  
+#Remove N/A rows
+cvresults <- cvresults %>% 
+  filter(!is.na(cvresults$fold))
+
+    
+# Iterating Cutoff/Threshold Values
+for (j in j.min:j.max) {
+  threshold = .025*j
+  
+  ## Predicted Value - see note above
+  penal.predictval <- cvresults$prob>=threshold 
+  
+  #Calculate Confusion Table
+  confusion <- table(penal.predictval, cvresults$found)
+  
+  #Record Results
+  summary.results[j, ] <- as.list(get_results(j, model.name, alpha_j, 
+                                        cvresults$found, cvresults$prob, threshold, confusion))
+}
+
+# Summarize Results
+## Ensure data type is numeric
+summary.results <- ensure_numeric(summary.results)
+## Record Summary Results
+penal.threshold.results <- summary.results
+
+# Output Summary Results
+summary_threshold(summary.results)
+summary_table(summary.results)
+
+#Optimal Threshold
+best.thresh = summary.results[summary.results$Loss == min(summary.results[, "Loss"]), ]
+opt_threshold(best.thresh)
+
+#Save data for optimal threshold - used in AUROC
+## Set Threshold
+threshold = best.thresh[1, "Threshold"]
+## Table of Predictions (based on threshold)
+penal.fit.pred = rep(0, nrow(cvresults))
+penal.fit.pred[cvresults$prob > threshold] = 1
+## Add to cvresults
+cvresults$pred <- penal.fit.pred
+## Save for later use
+penal.fullpredictions <- cvresults
+## Remove all rows in temporary table
+
+# Optimal Lambda
+bestlam
+
+# Coefficients for selected model
+coef(cv.fit, s = bestlam)
+```
+A threshold of $\lambda$ = 0.125 was selected, which maximizes the true positive rate within a reasonable bound of precision. Again, $\alpha$ = 1 was selected, indicating Lasso Regression.
+
+
+## Random Forest: Overview
+Random Forests utilize multiple tuning parameters, namely: (i) number of trees (ntree), (ii) the number of predictors to consider at each split (mtry), (iii) the sample size in each bagging sample from which to build the tree (sampsize), and (iv) tree size limit (maxnodes).
+
+Each of these tuning parameters was explored. The exploration is presented sequentially below, however in practice multiple iterations of the calculations were performed in different orders. As a result, the choice of optimal tuning parameters is the result of a “greedy algorithm” process (applied multiple times in practice). While a grid search may result in a more optimal set of parameters, greedy algorithms frequently result in good solutions and this is supported by the multiple iterations performed in practice and the resulting AUROC of the model. The exploration of each parameter is described below.
+
+### Random Forest: Tuning Parameter Optimization (ntree)
+The number of trees to be used in the random forest model is represented by ntree in R. The higher the number of trees used in the model, the higher the accuracy of the model though the longer the associated runtime. With any model there is a tradeoff in terms of improved performance and runtime, and generally a trend of diminishing returns is observed. The plots of AUROC vs. ntree and Accuracy vs. ntree were used to choose a value of ntree that provides the maximum model improvement without creating unnecessary additional computing time.
+
+```{r Random Forest Tuning ntree, warning=FALSE}
+
+model.name = "Random Forest"
+threshold = 0.5 #Constant threshold while evaluating polynomial
+
+# j - Used for optimal threshold
+j.min = 1 
+j.max = 8
+
+#Tuning Parameters
+mtrynum = 1 #Note - observed to be optimal in subsequent calculations
+#maxnodes = NULL by default per documentation
+#sampsize = nrow(x) by default per documentation
+
+# Create empty dataframe for data
+summary.results <- create_summary_table(j.max)
+
+cvresults <- data.frame(matrix(data=NA, ncol = 4))
+colnames(cvresults) <- c("found", "fold", "prob", "pred")
+
+# Iterating Cutoff/Threshold Values 
+for (j in j.min:j.max) {
+  numtrees = j*25
+  
+  # K-Fold Cross Validation - Iterating Folds
+  for (i in 1:K) {
+    
+    # Assign data appropriately for current fold
+    k.test = which(fold == i)
+    k.train = which(fold != i)
+    testdata = haiti[k.test, ]
+    traindata = haiti[k.train, ]
+    
+    # Fit Model
+    set.seed(215)
+    rf.fit <- randomForest(found~Red+Green+Blue, data=traindata, mtry = mtrynum, 
+                           ntree = numtrees)
+    
+    # Test Model
+    ## Probabilities
+    rf.fit.prob = predict(rf.fit, newdata = testdata, type = "prob")
+    
+    ## Table of Predictions (based on threshold)
+    rf.fit.pred = rep(0, nrow(testdata))
+    rf.fit.pred[rf.fit.prob[, 2] > threshold] = 1
+    
+    # Record Results
+    ## Compile Results from Current Fold
+    cvresults.k <- fold_results(testdata$found, i, rf.fit.prob[, 2], rf.fit.pred)
+    
+    ## Aggregate All CV Results
+    cvresults <- rbind(cvresults, cvresults.k)
+    
+    ## Remove all rows in temporary table
+    cvresults.k <- cvresults.k[0,] 
+    
+  }
+  
+  #Remove N/A rows
+  cvresults <- cvresults %>% 
+    filter(!is.na(cvresults$fold))
+  
+  #Calculate Confusion Table
+  confusion <- table(cvresults$pred, cvresults$found)
+  
+  #Record Results
+  summary.results[j, ] <- as.list(get_results(j, model.name, numtrees, cvresults$found, 
+                                              cvresults$prob, threshold, confusion))
+
+  #Remove all rows in temporary table
+  cvresults <- cvresults[0,] 
+}
+
+# Summarize Results
+## Ensure data type is numeric
+summary.results <- ensure_numeric(summary.results)
+## Record Summary Results
+rf.tuning.ntree.results <- summary.results
+
+# Output Summary Results
+summary_tuning_parameter(summary.results)
+summary_table(summary.results)
+```
+
+Based on the plots of AUROC vs. ntree and Accuracy vs. ntree, ntree = 100 was chosen as the optimal parameter.
+
+
+### Random Forest: Tuning Parameter Optimization (mtry)
+The number of parameters to randomly consider at each tree split is represented by mtry in R. Given that only three predictors are considered (Red, Blue, and Green), this predictor was evaluated from mtry = 1 to mtry = 3. 
+
+```{r Random Forest Tuning mtry, warning=FALSE}
+
+model.name = "Random Forest"
+threshold = 0.5 #Constant threshold while evaluating polynomial
+
+# j - Used for optimal threshold
+j.min = 1 
+j.max = 3
+
+#Tuning Parameters
+numtrees = 100
+#maxnodes = NULL by default per documentation
+#sampsize = nrow(x) by default per documentation
+
+# Create empty dataframe for data
+summary.results <- create_summary_table(j.max)
+
+cvresults <- data.frame(matrix(data=NA, ncol = 4))
+colnames(cvresults) <- c("found", "fold", "prob", "pred")
+
+# Iterating Cutoff/Threshold Values 
+for (j in j.min:j.max) {
+  mtrynum = j
+  
+  # K-Fold Cross Validation - Iterating Folds
+  for (i in 1:K) {
+    
+    # Assign data appropriately for current fold
+    k.test = which(fold == i)
+    k.train = which(fold != i)
+    testdata = haiti[k.test, ]
+    traindata = haiti[k.train, ]
+    
+    # Fit Model
+    set.seed(215)
+    rf.fit <- randomForest(found~Red+Green+Blue, data=traindata, mtry = mtrynum, 
+                           ntree = numtrees)
+    
+    # Test Model
+    ## Probabilities
+    rf.fit.prob = predict(rf.fit, newdata = testdata, type = "prob")
+    
+    ## Table of Predictions (based on threshold)
+    rf.fit.pred = rep(0, nrow(testdata))
+    rf.fit.pred[rf.fit.prob[, 2] > threshold] = 1
+    
+    # Record Results
+    ## Compile Results from Current Fold
+    cvresults.k <- fold_results(testdata$found, i, rf.fit.prob[, 2], rf.fit.pred)
+    
+    ## Aggregate All CV Results
+    cvresults <- rbind(cvresults, cvresults.k)
+    
+    ## Remove all rows in temporary table
+    cvresults.k <- cvresults.k[0,] 
+    
+  }
+  
+  #Remove N/A rows
+  cvresults <- cvresults %>% 
+    filter(!is.na(cvresults$fold))
+  
+  #Calculate Confusion Table
+  confusion <- table(cvresults$pred, cvresults$found)
+  
+  #Record Results
+  summary.results[j, ] <- as.list(get_results(j, model.name, mtrynum, cvresults$found, 
+                                              cvresults$prob, threshold, confusion))
+
+  #Remove all rows in temporary table
+  cvresults <- cvresults[0,] 
+}
+
+# Summarize Results
+## Ensure data type is numeric
+summary.results <- ensure_numeric(summary.results)
+## Record Summary Results
+rf.tuning.mtry.results <- summary.results
+
+# Output Summary Results
+summary_tuning_parameter(summary.results)
+summary_table(summary.results)
+```
+Based upon the AUROC values observed, mtry = 1 was selected as the optimal value of this tuning parameter.
+
+### Random Forest: Tuning Parameter Optimization (sampsize)
+
+The sample size of the bagging sample used to create each tree is represented by sampsize in R. This model parameter not only dictates the size of each sample, but for classification problems dictates the size of each class from which to sample. The summary below presents 2 “not found” observations to 1 “found” observation (note: the tuning parameter in the summary table presents the number of “found” observations). In practice, a number of ratios were explored. A higher number of “not found” to “found” observations performed better than the opposite or an equal split. There was limited improvement in results from significantly increasing “not found” observations and similar conclusions were drawn.
+
+
+```{r Random Forest Tuning sampsize, warning=FALSE}
+
+model.name = "Random Forest"
+threshold = 0.5 #Constant threshold while evaluating polynomial
+
+# j - Used for optimal threshold
+j.min = 1 
+j.max = 10
+
+#Tuning Parameters
+numtrees = 100
+mtrynum = 1
+#maxnodes = NULL by default per documentation
+#sampsize = nrow(x) by default per documentation
+
+# Create empty dataframe for data
+summary.results <- create_summary_table(j.max)
+
+cvresults <- data.frame(matrix(data=NA, ncol = 4))
+colnames(cvresults) <- c("found", "fold", "prob", "pred")
+
+# Iterating Cutoff/Threshold Values 
+for (j in j.min:j.max) {
+  sampsize = 50*j
+  
+  # K-Fold Cross Validation - Iterating Folds
+  for (i in 1:10) {
+    
+    # Assign data appropriately for current fold
+    k.test = which(fold == i)
+    k.train = which(fold != i)
+    testdata = haiti[k.test, ]
+    traindata = haiti[k.train, ]
+    
+    # Fit Model
+    set.seed(215)
+    rf.fit <- randomForest(found~Red+Green+Blue, data=traindata, mtry = mtrynum, 
+                           ntree = numtrees, sampsize = c(2*sampsize,sampsize))
+    
+    # Test Model
+    ## Probabilities
+    rf.fit.prob = predict(rf.fit, newdata = testdata, type = "prob")
+    
+    ## Table of Predictions (based on threshold)
+    rf.fit.pred = rep(0, nrow(testdata))
+    rf.fit.pred[rf.fit.prob[, 2] > threshold] = 1
+    
+    # Record Results
+    ## Compile Results from Current Fold
+    cvresults.k <- fold_results(testdata$found, i, rf.fit.prob[, 2], rf.fit.pred)
+    
+    ## Aggregate All CV Results
+    cvresults <- rbind(cvresults, cvresults.k)
+    
+    ## Remove all rows in temporary table
+    cvresults.k <- cvresults.k[0,] 
+    
+  }
+  
+  #Remove N/A rows
+  cvresults <- cvresults %>% 
+    filter(!is.na(cvresults$fold))
+  
+  #Calculate Confusion Table
+  confusion <- table(cvresults$pred, cvresults$found)
+  
+  #Record Results
+  summary.results[j, ] <- as.list(get_results(j, model.name, sampsize, cvresults$found, 
+                                              cvresults$prob, threshold, confusion))
+
+  #Remove all rows in temporary table
+  cvresults <- cvresults[0,] 
+}
+
+# Summarize Results
+## Ensure data type is numeric
+summary.results <- ensure_numeric(summary.results)
+## Record Summary Results
+rf.tuning.mtry.results <- summary.results
+
+# Output Summary Results
+summary_tuning_parameter(summary.results)
+summary_table(summary.results)
+```
+Reducing sample size did not improve performance, and hence it was decided to use the default value which is equal to the number of observations in the training data set.
+
+### Random Forest: Tuning Parameter Optimization (maxnodes)
+
+The size of each tree in the random forest model is controlled using maxnodes in R. In general, pruning is not expected to significantly improve most models and performance can be improved by allowing trees to grow large. However, this was explored and verified using cross validation below. Ranges of 10 to 50 are presented below, however a smaller, more granular ranges and broader ranges were also explored in practice. 
+
+```{r Random Forest Tuning maxnodes, warning=FALSE}
+
+model.name = "Random Forest"
+threshold = 0.5 #Constant threshold while evaluating polynomial
+
+# j - Used for optimal threshold
+j.min = 1 
+j.max = 5
+
+#Tuning Parameters
+numtrees = 100
+mtrynum = 1
+#sampsize = nrow(x) by default per documentation
+
+# Create empty dataframe for data
+summary.results <- create_summary_table(j.max)
+
+cvresults <- data.frame(matrix(data=NA, ncol = 4))
+colnames(cvresults) <- c("found", "fold", "prob", "pred")
+
+# Iterating Cutoff/Threshold Values 
+for (j in j.min:j.max) {
+  maxnodenum = j * 50
+  
+  # K-Fold Cross Validation - Iterating Folds
+  for (i in 1:10) {
+    
+    # Assign data appropriately for current fold
+    k.test = which(fold == i)
+    k.train = which(fold != i)
+    testdata = haiti[k.test, ]
+    traindata = haiti[k.train, ]
+    
+    # Fit Model
+    set.seed(215)
+    rf.fit <- randomForest(found~Red+Green+Blue, data=traindata, mtry = mtrynum, 
+                           ntree = numtrees, maxnodes = maxnodenum)
+    
+    # Test Model
+    ## Probabilities
+    rf.fit.prob = predict(rf.fit, newdata = testdata, type = "prob")
+    
+    ## Table of Predictions (based on threshold)
+    rf.fit.pred = rep(0, nrow(testdata))
+    rf.fit.pred[rf.fit.prob[, 2] > threshold] = 1
+    
+    # Record Results
+    ## Compile Results from Current Fold
+    cvresults.k <- fold_results(testdata$found, i, rf.fit.prob[, 2], rf.fit.pred)
+    
+    ## Aggregate All CV Results
+    cvresults <- rbind(cvresults, cvresults.k)
+    
+    ## Remove all rows in temporary table
+    cvresults.k <- cvresults.k[0,] 
+    
+  }
+  
+  #Remove N/A rows
+  cvresults <- cvresults %>% 
+    filter(!is.na(cvresults$fold))
+  
+  #Calculate Confusion Table
+  confusion <- table(cvresults$pred, cvresults$found)
+  
+  #Record Results
+  summary.results[j, ] <- as.list(get_results(j, model.name, maxnodenum, cvresults$found, 
+                                              cvresults$prob, threshold, confusion))
+
+  #Remove all rows in temporary table
+  cvresults <- cvresults[0,] 
+}
+
+# Summarize Results
+## Ensure data type is numeric
+summary.results <- ensure_numeric(summary.results)
+## Record Summary Results
+rf.tuning.maxnodes.results <- summary.results
+
+# Output Summary Results
+summary_tuning_parameter(summary.results)
+summary_table(summary.results)
+```
+Cross validation indicates that limiting tree size does not improve performance.
+
+
+### Random Forest: Threshold Selection
+
+Cross validation was employed to select an appropriate threshold applying the tuning parameters cited above: ntree = 100, mtry = 1, sampsize = default (training observations), maxnodes = default (no trimming).
+
+```{r Random Forest Threshold, warning=FALSE}
+
+model.name = "Random Forest"
+
+# j - Used for optimal threshold
+j.min = 1 
+j.max = 10
+
+#Choice of Tuning Parameters
+mtrynum = 1
+numtrees = 100
+#sampsize = nrow(x) by default per documentation
+#maxnodes: no trimming by default per documentation
+
+threshold = 0.5 #Initial, prior to iteration
+
+# Create empty dataframe for data
+summary.results <- create_summary_table(j.max)
+
+cvresults <- data.frame(matrix(data=NA, ncol = 4))
+colnames(cvresults) <- c("found", "fold", "prob", "pred")
+
+# K-Fold Cross Validation - Iterating Folds
+for (i in 1:K) {
+  
+  # Assign data appropriately for current fold
+  k.test = which(fold == i)
+  k.train = which(fold != i)
+  testdata = haiti[k.test, ]
+  traindata = haiti[k.train, ]
+
+  # Fit Model
+  set.seed(215)
+  rf.fit <- randomForest(found~Red+Green+Blue, data=traindata, mtry = mtrynum, 
+                         ntree = numtrees)
+  
+  # Test Model
+  ## Probabilities
+  rf.fit.prob = predict(rf.fit, newdata = testdata, type = "prob")
+  
+  ## Table of Predictions (based on threshold)
+  rf.fit.pred = rep(0, nrow(testdata))
+  rf.fit.pred[rf.fit.prob[, 2] > threshold] = 1
+  
+  # Record Results
+  ## Compile Results from Current Fold
+  cvresults.k <- fold_results(testdata$found, i, rf.fit.prob[, 2], rf.fit.pred)
+  
+  ## Aggregate All CV Results
+  cvresults <- rbind(cvresults, cvresults.k)
+  
+  ## Remove all rows in temporary table
+  cvresults.k <- cvresults.k[0,] 
+  
+}
+#Remove N/A rows
+cvresults <- cvresults %>% 
+  filter(!is.na(cvresults$fold))
+
+# Iterating Cutoff/Threshold Values 
+for (j in j.min:j.max) {
+  threshold = .025*j
+  
+  ## Table of Predictions (based on threshold)
+  rf.fit.pred = rep(0, nrow(cvresults))
+  rf.fit.pred[cvresults$prob > threshold] = 1
+  
+  #Calculate Confusion Table
+  confusion <- table(rf.fit.pred, cvresults$found)
+  
+  #Record Results
+  summary.results[j, ] <- as.list(get_results(j, model.name, mtrynum, cvresults$found, 
+                                              cvresults$prob, threshold, confusion))
+}
+
+# Summarize Results
+## Ensure data type is numeric
+summary.results <- ensure_numeric(summary.results)
+## Record Summary Results
+rf.threshold.results <- summary.results
+
+# Output Summary Results
+summary_threshold(summary.results)
+summary_table(summary.results)
+
+#Optimal Threshold
+best.thresh = summary.results[summary.results$Loss == min(summary.results[, "Loss"]), ]
+opt_threshold(best.thresh)
+
+#Save data for optimal threshold - used in AUROC
+## Set Threshold
+threshold = best.thresh[1, "Threshold"]
+## Table of Predictions (based on threshold)
+rf.fit.pred = rep(0, nrow(cvresults))
+rf.fit.pred[cvresults$prob > threshold] = 1
+## Add to cvresults
+cvresults$pred <- rf.fit.pred
+## Save for later use
+rf.fullpredictions <- cvresults
+## Remove all rows in temporary table
+cvresults <- cvresults[0,] 
+```
+Utilizing the tuning parameters ntree = 100 and mtry = 1, we select $\lambda$ = .225 as the optimal threshold. A range of thresholds result in attractive balances of true positive rate and precision, however the loss function was utilized to maintain consistency in evaluation between models.
+
+## Support Vector Machines
+
+Support vector machines (SVMs) possess two general types of tuning parameters: kernel and cost. Within the kernel parameter, however, we look at kernel type and an additional parameter for fit which depends on type. For polynomial kernels, this second parameter is the polynomial itself. For radial kernels, this second parameter is expressed by $\gamma$.
+
+Similar to the method taken in Random Forests, a sequential approach was taken for estimating optimal tuning parameters similar to that followed by a “greedy algorithm.” Multiple iterations were performed in practice, though a single process is summarized below. Some improvement may be possible by implementing a more formal grid search, however strong performance was observed given the AUROC values. 
+
+Three kernels are explored in detail below: linear (polynomial = 1), second degree polynomial, and radial kernels. For both the linear and second degree polynomial kernels, the optimal cost was identified using cross validation. Radial kernels were optimized through a more iterative process, optimizing both cost and $\gamma$. When selecting an optimal cost parameter, if similar performance was observed between two cost values, a lower cost was selected which effectively selects a less complex model.
+
+The optimal performance of the three kernels were compared, a single model was chosen, and then a threshold was selected associated with that model.
+
+It should be noted that a wider range of each tuning parameter (cost, $\gamma$) was explored, however certain fitting certain parameter combinations with support vector machines require significant runtime, with over an hour for a single 10-fold cross validation calculation. As a result, a narrower range is highlighted below. 
+
+### SVM - Linear Kernel
+
+A range of costs were explored below for the linear kernel utilizing cross validation.
+```{r SVM Linear Cost Tuning, warning=FALSE}
+
+model.name = "SVM - Linear Kernel"
+threshold = 0.5 #Constant threshold while evaluating polynomial
+
+# j - Used for optimal threshold
+j.min = 1 
+j.max = 6
+
+# Create empty dataframe for data
+summary.results <- create_summary_table(j.max)
+
+cvresults <- data.frame(matrix(data=NA, ncol = 4))
+colnames(cvresults) <- c("found", "fold", "prob", "pred")
+
+# Iterating Cutoff/Threshold Values 
+for (j in j.min:j.max) {
+  costnum = 10^(j-6)
+  
+  # K-Fold Cross Validation - Iterating Folds
+  for (i in 1:K) {
+    
+    # Assign data appropriately for current fold
+    k.test = which(fold == i)
+    k.train = which(fold != i)
+    testdata = haiti[k.test, ]
+    traindata = haiti[k.train, ]
+    
+    # Fit Model
+    svm.fit <- svm(found~Red+Green+Blue, data=traindata, kernel="linear", cost = costnum, 
+                   scale = FALSE, type = "C", probability = TRUE)
+
+    # Test Model
+    ## Probabilities
+    svm.fit.probcalc = predict(svm.fit, newdata = testdata, decision.value = TRUE, probability = TRUE)
+    svm.fit.prob = attr(svm.fit.probcalc, "probabilities")[, 2]
+    
+    ## Table of Predictions (based on threshold)
+    svm.fit.pred = rep(0, nrow(testdata))
+    svm.fit.pred[svm.fit.prob > threshold] = 1
+    
+    # Record Results
+    ## Compile Results from Current Fold
+    cvresults.k <- fold_results(testdata$found, i, svm.fit.prob, svm.fit.pred)
+
+    ## Aggregate All CV Results
+    cvresults <- rbind(cvresults, cvresults.k)
+    
+    ## Remove all rows in temporary table
+    cvresults.k <- cvresults.k[0,] 
+  }
+  
+  #Remove N/A rows
+  cvresults <- cvresults %>% 
+    filter(!is.na(cvresults$fold))
+  
+  #Calculate Confusion Table
+  confusion <- table(cvresults$pred, cvresults$found)
+  
+  #Record Results
+  summary.results[j, ] <- as.list(get_results(j, model.name, costnum, cvresults$found, 
+                                              cvresults$prob, threshold, confusion))
+
+  #Remove all rows in temporary table
+  cvresults <- cvresults[0,] 
+}
+
+# Summarize Results
+## Ensure data type is numeric
+summary.results <- ensure_numeric(summary.results)
+## Record Summary Results
+svm.tuning.linear.results <- summary.results
+
+# Output Summary Results
+summary_tuning_parameter(summary.results)
+summary_table(summary.results)
+```
+It should be noted that a wider range of values was explored during exploratory analysis, however compute time increases significantly with higher orders of cost. In general, AUROC increases until cost is ~ 1e-2, remains roughly flat until cost ~1, and then decreases. Given this trend and the preference for lower cost values, a cost of 1e-2 was selected as the optimal parameter.
+
+
+### SVM - Polynomial Degree 2 Kernel
+A range of costs were explored below utilizing cross validation for the second degree polynomial kernel.
+```{r SVM Polynomial 2 Tuning, warning=FALSE}
+
+model.name = "SVM - Poly 2 Kernel"
+threshold = 0.5 #Constant threshold while evaluating polynomial
+
+# j - Used for optimal threshold
+j.min = 1 
+j.max = 5
+
+# Create empty dataframe for data
+summary.results <- create_summary_table(j.max)
+
+cvresults <- data.frame(matrix(data=NA, ncol = 4))
+colnames(cvresults) <- c("found", "fold", "prob", "pred")
+
+# Iterating Cutoff/Threshold Values 
+for (j in j.min:j.max) {
+  costnum = 10^(j-8)
+  
+  # K-Fold Cross Validation - Iterating Folds
+  for (i in 1:K) {
+    
+    # Assign data appropriately for current fold
+    k.test = which(fold == i)
+    k.train = which(fold != i)
+    testdata = haiti[k.test, ]
+    traindata = haiti[k.train, ]
+    
+    # Fit Model
+    svm.fit <- svm(found~Red+Green+Blue, data=traindata, kernel="polynomial", degree = 2, 
+                   cost = costnum, scale = FALSE, type = "C", probability = TRUE)
+
+    # Test Model
+    ## Probabilities
+    svm.fit.probcalc = predict(svm.fit, newdata = testdata, decision.value = TRUE, probability = TRUE)
+    svm.fit.prob = attr(svm.fit.probcalc, "probabilities")[, 2]
+    
+    ## Table of Predictions (based on threshold)
+    svm.fit.pred = rep(0, nrow(testdata))
+    svm.fit.pred[svm.fit.prob > threshold] = 1
+    
+    # Record Results
+    ## Compile Results from Current Fold
+    cvresults.k <- fold_results(testdata$found, i, svm.fit.prob, svm.fit.pred)
+
+    ## Aggregate All CV Results
+    cvresults <- rbind(cvresults, cvresults.k)
+    
+    ## Remove all rows in temporary table
+    cvresults.k <- cvresults.k[0,] 
+  }
+  
+  #Remove N/A rows
+  cvresults <- cvresults %>% 
+    filter(!is.na(cvresults$fold))
+  
+  #Calculate Confusion Table
+  confusion <- table(cvresults$pred, cvresults$found)
+  
+  #Record Results
+  summary.results[j, ] <- as.list(get_results(j, model.name, costnum, cvresults$found, 
+                                              cvresults$prob, threshold, confusion))
+
+  #Remove all rows in temporary table
+  cvresults <- cvresults[0,] 
+}
+
+# Summarize Results
+## Ensure data type is numeric
+summary.results <- ensure_numeric(summary.results)
+## Record Summary Results
+svm.tuning.poly2.results <- summary.results
+
+# Output Summary Results
+summary_tuning_parameter(summary.results)
+summary_table(summary.results)
+```
+
+While a cost of 1e-4 produces the maximum AUROC, the AUROC values achieved with the second degree polynomial kernel were not a great as those achieved using the linear kernel. Given this fact, third degree polynomials were not explored in great detail.
+
+
+### SVM - Radial Kernel
+
+Radial kernels required optimizing cost and $\gamma$. This was performed in practice by (1) optimizing cost, (2) optimizing $\gamma$, (3) re-optimizing cost, and (4) repeating until no performance improvements were observed. In practice, this was performed for different values of $\gamma$ to ensure that a reasonably strong set of tuning parameters were chosen. A single optimization of cost and $\gamma$ are presented below (as part of a greater iterative process). The process illustrated below starts with a cost of 1e-4 and optimizes $\gamma$.
+
+```{r SVM Radial Gamma Tuning, warning=FALSE}
+model.name = "SVM - Radial Kernel"
+threshold = 0.5 #Constant threshold while evaluating polynomial
+costnum = 1e-4
+
+# j - Used for optimal threshold
+j.min = 1
+j.max = 4
+
+# Create empty dataframe for data
+summary.results <- create_summary_table(j.max)
+
+cvresults <- data.frame(matrix(data=NA, ncol = 4))
+colnames(cvresults) <- c("found", "fold", "prob", "pred")
+
+# Iterating Cutoff/Threshold Values
+for (j in j.min:j.max) {
+  gammanum = 10^(j-6)
+
+  # K-Fold Cross Validation - Iterating Folds
+  for (i in 1:10) {
+
+    # Assign data appropriately for current fold
+    k.test = which(fold == i)
+    k.train = which(fold != i)
+    testdata = haiti[k.test, ]
+    traindata = haiti[k.train, ]
+
+    # Fit Model
+    svm.fit <- svm(found~Red+Green+Blue, data=traindata, kernel="radial", gamma = gammanum,
+               cost = costnum, scale = FALSE, type = "C", probability = TRUE)
+
+    # Test Model
+    ## Probabilities
+    svm.fit.probcalc = predict(svm.fit, newdata = testdata, decision.value = TRUE, probability = TRUE)
+    svm.fit.prob = attr(svm.fit.probcalc, "probabilities")[, 2]
+
+    ## Table of Predictions (based on threshold)
+    svm.fit.pred = rep(0, nrow(testdata))
+    svm.fit.pred[svm.fit.prob > threshold] = 1
+
+    # Record Results
+    ## Compile Results from Current Fold
+    cvresults.k <- fold_results(testdata$found, i, svm.fit.prob, svm.fit.pred)
+
+    ## Aggregate All CV Results
+    cvresults <- rbind(cvresults, cvresults.k)
+
+    ## Remove all rows in temporary table
+    cvresults.k <- cvresults.k[0,]
+  }
+
+  #Remove N/A rows
+  cvresults <- cvresults %>%
+    filter(!is.na(cvresults$fold))
+
+  #Calculate Confusion Table
+  confusion <- table(cvresults$pred, cvresults$found)
+
+  #Record Results
+  summary.results[j, ] <- as.list(get_results(j, model.name, gammanum, cvresults$found,
+                                              cvresults$prob, threshold, confusion))
+
+  #Remove all rows in temporary table
+  cvresults <- cvresults[0,]
+}
+
+# Summarize Results
+## Ensure data type is numeric
+summary.results <- ensure_numeric(summary.results)
+## Record Summary Results
+svm.tuning.radial.gamma.results <- summary.results
+
+# Output Summary Results
+summary_tuning_parameter(summary.results)
+summary_table(summary.results)
+```
+Given the AUROC values observed a value of $\gamma$ = 1e-2 is chosen as the optimal parameter.
+
+
+```{r SVM Radial Cost Tuning, warning=FALSE}
+model.name = "SVM - Radial Kernel"
+threshold = 0.5 #Constant threshold while evaluating polynomial
+gammanum = 1e-4
+
+# j - Used for optimal threshold
+j.min = 1 
+j.max = 6
+
+# Create empty dataframe for data
+summary.results <- create_summary_table(j.max)
+
+cvresults <- data.frame(matrix(data=NA, ncol = 4))
+colnames(cvresults) <- c("found", "fold", "prob", "pred")
+
+# Iterating Cutoff/Threshold Values 
+for (j in j.min:j.max) {
+  costnum = 10^(j-2)
+  
+  # K-Fold Cross Validation - Iterating Folds
+  for (i in 1:K) {
+    
+    # Assign data appropriately for current fold
+    k.test = which(fold == i)
+    k.train = which(fold != i)
+    testdata = haiti[k.test, ]
+    traindata = haiti[k.train, ]
+    
+    # Fit Model
+    svm.fit <- svm(found~Red+Green+Blue, data=traindata, kernel="radial", gamma = gammanum, 
+               cost = costnum, scale = FALSE, type = "C", probability = TRUE)
+
+    # Test Model
+    ## Probabilities
+    svm.fit.probcalc = predict(svm.fit, newdata = testdata, decision.value = TRUE, probability = TRUE)
+    svm.fit.prob = attr(svm.fit.probcalc, "probabilities")[, 2]
+    
+    ## Table of Predictions (based on threshold)
+    svm.fit.pred = rep(0, nrow(testdata))
+    svm.fit.pred[svm.fit.prob > threshold] = 1
+    
+    # Record Results
+    ## Compile Results from Current Fold
+    cvresults.k <- fold_results(testdata$found, i, svm.fit.prob, svm.fit.pred)
+
+    ## Aggregate All CV Results
+    cvresults <- rbind(cvresults, cvresults.k)
+    
+    ## Remove all rows in temporary table
+    cvresults.k <- cvresults.k[0,] 
+  }
+  
+  #Remove N/A rows
+  cvresults <- cvresults %>% 
+    filter(!is.na(cvresults$fold))
+  
+  #Calculate Confusion Table
+  confusion <- table(cvresults$pred, cvresults$found)
+  
+  #Record Results
+  summary.results[j, ] <- as.list(get_results(j, model.name, costnum, cvresults$found, 
+                                              cvresults$prob, threshold, confusion))
+
+  #Remove all rows in temporary table
+  cvresults <- cvresults[0,] 
+}
+
+# Summarize Results
+## Ensure data type is numeric
+summary.results <- ensure_numeric(summary.results)
+## Record Summary Results
+svm.tuning.radial.results <- summary.results
+
+# Output Summary Results
+summary_tuning_parameter(summary.results)
+summary_table(summary.results)
+```
+A cost of $\gamma$ = 1e2 maximizes the AUROC and is chosen as the optimal tuning parameter for the radial kernel.
+
+While the AUROC generated by the radial kernel is slightly higher than that of the linear kernel, the linear kernel was selected given that performance is somewhat similar and the linear kernel presents less chance of over fitting. In practice, both were explored and the radial kernel exhibited significant signs of over fitting the holdout data, though for brevity this data is omitted.
+
+
+### SVM: Threshold Selection
+
+Given the preceding calculations, a linear kernel was selected with cost = 1e-2. Using these tuning parameters, an appropriate threshold was chosen utilizing cross validation below.
+
+```{r SVM Threshold, warning=FALSE}
+
+model.name = "SVM"
+
+# j - Used for optimal threshold
+j.min = 1 
+j.max = 10
+
+#Choice of Tuning Parameters
+costnum = 1e-2 
+threshold = 0.5 #Initial, prior to iteration
+
+# Create empty dataframe for data
+summary.results <- create_summary_table(j.max)
+
+cvresults <- data.frame(matrix(data=NA, ncol = 4))
+colnames(cvresults) <- c("found", "fold", "prob", "pred")
+
+# K-Fold Cross Validation - Iterating Folds
+for (i in 1:K) {
+  
+  # Assign data appropriately for current fold
+  k.test = which(fold == i)
+  k.train = which(fold != i)
+  testdata = haiti[k.test, ]
+  traindata = haiti[k.train, ]
+  
+  # Fit Model
+  svm.fit <- svm(found~Red+Green+Blue, data=traindata, kernel="linear", cost = costnum, 
+                 scale = FALSE, type = "C", probability = TRUE)
+
+  # Test Model
+  ## Probabilities
+  svm.fit.probcalc = predict(svm.fit, newdata = testdata, decision.value = TRUE, probability = TRUE)
+  svm.fit.prob = attr(svm.fit.probcalc, "probabilities")[, 2]
+  
+  ## Table of Predictions (based on threshold)
+  svm.fit.pred = rep(0, nrow(testdata))
+  svm.fit.pred[svm.fit.prob > threshold] = 1
+  
+  # Record Results
+  ## Compile Results from Current Fold
+  cvresults.k <- fold_results(testdata$found, i, svm.fit.prob, svm.fit.pred)
+  
+  ## Aggregate All CV Results
+  cvresults <- rbind(cvresults, cvresults.k)
+  
+  ## Remove all rows in temporary table
+  cvresults.k <- cvresults.k[0,] 
+  
+}
+#Remove N/A rows
+cvresults <- cvresults %>% 
+  filter(!is.na(cvresults$fold))
+
+# Iterating Cutoff/Threshold Values 
+for (j in j.min:j.max) {
+  threshold = .025*j
+  
+  ## Table of Predictions (based on threshold)
+  svm.fit.pred = rep(0, nrow(cvresults))
+  svm.fit.pred[cvresults$prob > threshold] = 1
+  
+  #Calculate Confusion Table
+  confusion <- table(svm.fit.pred, cvresults$found)
+  
+  #Record Results
+  summary.results[j, ] <- as.list(get_results(j, model.name, costnum, cvresults$found, 
+                                              cvresults$prob, threshold, confusion))
+}
+
+# Summarize Results
+## Ensure data type is numeric
+summary.results <- ensure_numeric(summary.results)
+## Record Summary Results
+svm.threshold.results <- summary.results
+
+# Output Summary Results
+summary_threshold(summary.results)
+summary_table(summary.results)
+
+#Optimal Threshold
+best.thresh = summary.results[summary.results$Loss == min(summary.results[, "Loss"]), ]
+opt_threshold(best.thresh)
+
+#Save data for optimal threshold - used in AUROC
+## Set Threshold
+threshold = best.thresh[1, "Threshold"]
+## Table of Predictions (based on threshold)
+svm.fit.pred = rep(0, nrow(cvresults))
+svm.fit.pred[cvresults$prob > threshold] = 1
+## Add to cvresults
+cvresults$pred <- svm.fit.pred
+## Save for later use
+svm.fullpredictions <- cvresults
+## Remove all rows in temporary table
+cvresults <- cvresults[0,] 
+```
+
+While the Loss Function is minimized at $\lambda$ = 0.075, we select $\lambda$ = 0.125 as this fits within the precision requirement outlined previously.
+
+
+
+# Summary Results
+The summary results of each of the selected models are presented below. This involves each model with the optimal/selected tuning parameters(if applicable), and threshold. For reference each models' tuning parameters are as follows:
+
+- **Logistic Regression:** No inherent tuning parameter, however it was chosen to evaluate polynomial degree of the "Blue" predictor.
+
+- **LDA:** No tuning parameter
+
+- **QDA:** No tuning parameter
+
+- **KNN:** k, the number of nearest neighbors
+
+- **Penalized Logistic Regression:** $\lambda$ and $\alpha$. $\alpha$ indicates the implementation of Lasso Regression, while $\lambda$  has no intuitive interpretation. Hence, $\alpha$ is presented in the proceeding table and $\lambda$ is noted below. This analysis was performed using third degree polynomials of each original predictor: Red, Blue, and Green.
+
+- **Random Forest:** ntree (number of trees), mtry (predictors randomly selected at each split), sampsize (observations selected at each bagging step), maxnodes (maximum tree size)
+
+- **Support Vector Machines:** kernel (kernel type, fitting parameter - e.g. $\gamma$ or polynomial degree), cost
+
+## Summary Results Table
+The following table summarizes the results on the selected models utilizing 10-fold cross validation (specifically using the same folds for each model). Of note, logistic regression was performed using a third degree polynomial of the predictor Blue while penalized logistic regression includes third degree polynomial terms for Red, Blue, and Green.
+```{r Summary Results Table}
+summaryresults <- create_summary_table(7)
+
+# Logistic Regression - lambda = 0.1
+summaryresults[1, ] <- log.threshold.results[log.threshold.results$Threshold==.125, ]
+
+# LDA - lambda = .5
+summaryresults[2, ] <- lda.threshold.results[lda.threshold.results$Threshold==.075, ]
+
+# QDA - lambda =  .1
+summaryresults[3, ] <- qda.threshold.results[qda.threshold.results$Threshold==.05, ]
+
+# KNN - lambda = 3/37
+summaryresults[4, ] <- knn.threshold.results[5, ] # 3 votes occurrs on third row
+
+# Penal Logistic Regression - lambda = 0.1
+# alpha = 1, bestlam = 5.7e-6
+summaryresults[5, ] <- penal.threshold.results[penal.threshold.results$Threshold==.125, ]
+
+# Random Forest - .125
+# ntree = 100, mtry = 1, sampsize = number observations, maxnode = no constraint
+summaryresults[6, ] <- rf.threshold.results[rf.threshold.results$Threshold==.125, ]
+
+# Support Vector Machine - .125
+#Linear Kernel, cost = 1e-2
+summaryresults[7, ] <- svm.threshold.results[svm.threshold.results$Threshold==.125, ]
+
+summaryresults <- subset(summaryresults, select=-c(parameter_it))
+
+#Add tuning parameter descriptions
+#Logistic Regression
+summaryresults[1, "Tuning"] = "polynomial = 3"
+#LDA
+summaryresults[2, "Tuning"] = "NA"
+#QDA
+summaryresults[3, "Tuning"] = "NA"
+#KNN
+summaryresults[4, "Tuning"] = "k = 37"
+#Penal Log Reg
+summaryresults[5, "Tuning"] = "alpha = 1, lam = 5.7e-6"
+#Random Forest
+summaryresults[6, "Tuning"] = "mtry = 1, ntree = 100"
+#SVM
+summaryresults[7, "Tuning"] = "linear kernel, cost = 1e-2"
+
+summaryresults %>%
+  kbl(caption = "Summary Results - Cross Validation") %>%
+  kable_classic(full_width = F)
+
+```
+
+While each of the models generated a strong AUROC, LDA and QDA underperformed based upon their comparable true positive rate and precision. Neither model generated a precision of 80% and the true positive rate for both were smaller than their peers. 
+
+Logistic Regression and Penalized Logistic Regression generated particularly strong true positive rates, particularly in relation to their respective precisions. Random Forest and KNN also generated strong true positive rates, though with precisions below 90%.
+
+
+## Summary ROC Curves
+
+To generate the ROC Curves, the previously calculated out of sample predictions (probabilities) were utilized for each model.
+
+```{r Summary ROC Curves, warning=FALSE}
+# Set threshold - used for reference, not ROC calculations
+threshold = 0.5
+
+### Logistic Regression
+
+# ROC Fit
+roc.logreg <- roc(log.fullpredictions$found, log.fullpredictions$prob, levels = levels(as.factor(haiti$found)), 
+                  direction = "<", plot=FALSE, legacy.axes=TRUE, quiet = TRUE)
+
+### LDA
+roc.lda <- roc(lda.fullpredictions$found, lda.fullpredictions$prob, levels = levels(as.factor(haiti$found)), 
+                  direction = "<", plot=FALSE, legacy.axes=TRUE, quiet = TRUE)
+
+### QDA
+roc.qda <- roc(qda.fullpredictions$found, qda.fullpredictions$prob, levels = levels(as.factor(haiti$found)), 
+                  direction = "<", plot=FALSE, legacy.axes=TRUE, quiet = TRUE)
+
+### KNN
+roc.knn <- roc(knn.fullpredictions$found, knn.fullpredictions$prob, levels = levels(as.factor(haiti$found)), 
+                  direction = "<", plot=FALSE, legacy.axes=TRUE, quiet = TRUE)
+
+### Penalized Logistic Regression
+roc.penal <- roc(penal.fullpredictions$found, penal.fullpredictions$prob, levels = levels(as.factor(haiti$found)),
+                  direction = "<", plot=FALSE, legacy.axes=TRUE, quiet = TRUE)
+
+### Random Forest
+roc.rf <- roc(rf.fullpredictions$found, rf.fullpredictions$prob, levels = levels(as.factor(haiti$found)), 
+                  direction = "<", plot=FALSE, legacy.axes=TRUE, quiet = TRUE)
+
+### Support Vector Machine
+roc.svm <- roc(svm.fullpredictions$found, svm.fullpredictions$prob, levels = levels(as.factor(haiti$found)), 
+                  direction = "<", plot=FALSE, legacy.axes=TRUE, quiet = TRUE)
+
+# Plot - Split ROC Curves
+line.weight = 2
+plot.roc(roc.logreg, col = "blue", lwd = line.weight, legacy.axes = TRUE, main ="Model ROC Curves (Split 1)")
+plot.roc(roc.lda, col = "magenta", lwd = line.weight, add = TRUE)
+plot.roc(roc.qda, col = "green", lwd = line.weight, add = TRUE)
+plot.roc(roc.knn, col = "red", lwd = line.weight, add = TRUE)
+legend("bottomright", legend = c("Log Reg", "LDA", "QDA", "KNN"), 
+       col=c("blue", "magenta", "green", "red"), lwd = 4)
+
+plot.roc(roc.logreg, col = "blue", lwd = line.weight, legacy.axes = TRUE, main ="Model ROC Curves (Split 2)")
+plot.roc(roc.penal, col = "purple", lwd = line.weight, add = TRUE)
+plot.roc(roc.rf, col = "orange", lwd = line.weight, add = TRUE)
+plot.roc(roc.svm, col = "black", lwd = line.weight, add = TRUE)
+legend("bottomright", legend = c("Log Reg", "Penal Log Reg", "Rand Forest", "SVM"), 
+       col=c("blue", "purple", "orange", "black"), lwd = 4)
+
+```
+
+The ROC Curves were generated using out of sample data based upon each cross validation fold. The ROC Curves are presented in two separate plots given the overlapping nature of the curves. Logistic Regression was plotted in each for comparison. 
+
+Each of the model fits the data remarkably well based upon its ROC curve. LDA, which performed the poorest in the model training and selection process generated an AUC of 0.9889. 
+
+## Selected Model Summary
+The coefficients corresponding to the selected Logistic Regression Model of the form:
+
+ $$ln( P / (1-P)) = \beta_{0} + \beta_{Red}Red + \beta_{Green}Green + \beta_{Blue,1}Blue + \beta_{Blue,2}Blue^2 + \beta_{Blue,3}Blue^3$$
+
+are as follows
+```{r Selected Model Summary - Log Reg}
+summary(glm.fit)$coef[, ]
+```
+Similarly, the coefficients corresponding to the Penalized Logistic Regression model, which considered up to third degree polynomial terms of Blue, Red, and Green are as follows: 
+
+```{r Selected Model Summary - Penal Log Reg}
+coef(cv.fit, s=bestlam)
+```
+
+# Hold-Out Data / EDA
+The hold-out data was obtained in a single .zip file. After unzipping, 11 files were observed of which 3 were JPEG files. These JPEG files possess unlabeled data, and are not useful for evaluating our models (though blue tarps are clearly visible to the human eye). The remaining contain labels of "Blue_Tarps", "NOT_BLUE_Tarps", or "NON_Blue_Tarps" in the file name. A subset of data within each file was evaluated to check for likely mislabeling. Specifically, the training data indicated that Blue Tarps typically have higher Blue values than Red or Green. Upon an initial inspection of the data, the labeling appeared correct. Additionally, it seems that columns B1, B2, B3 correspond to Red, Green, Blue (RGB) in the training data.
+
+## Hold-Out Data Processing
+
+```{r Hold Out EDA 1, warning = FALSE}
+#Set file path to data directory
+filepath = paste(getwd(), "HoldOutData", sep="/")
+setwd(filepath)
+
+#Get list of files
+filelist = list.files(filepath)
+```
+
+Preliminary data observation:
+```{r Hold Out EDA 2, warning = FALSE}
+filelist[1]
+
+read_lines(file.path(filepath, filelist[1]), n_max = 20)
+
+data1 = read_table(file.path(filepath, filelist[1]), skip = 7)
+
+```
+Given the structure of the data in the text files, we are only interested in lines 8 (column headings) and beyond (actual data).
+
+
+Sequentially open each text file and check for consistency. Ignore JPEG files, as they represent unlabeled data.
+```{r Hold Out EDA 3, warning = FALSE}
+setwd(filepath)
+length(filelist)
+
+#Create list of text files only
+txtfiles <- filelist[-c(7, 8, 9)]
+
+for (i in 1:length(txtfiles)){
+  print(txtfiles[i])
+  print(read_lines(file.path(filepath, txtfiles[i]), n_max = 10))
+}
+
+  
+```
+Note:
+
+- Column Headings Start on Row 8 for all .txt files.
+
+- Files appear to be correctly labeled (Blue Tarp vs. NonBlueTarp). B3 (Blue) appears to be larger than B1 or B2 in the Blue Tarp data. It is smaller for NonBlueTarp Data. Additionally, given this observation, it seems reasonable to assume that B1, B2, B3 can be categorized as Red, Green, Blue (RGB). While only the first 10 lines of each file are shown above for brevity, a more detailed evaluation was performed in practice.
+
+- "orthovnir067_ROI_Blue_Tarps_data.txt" appears to be simply select columns from "orthovnir067_ROI_Blue_Tarps.txt". As a result, we will not use "orthovnir067_ROI_Blue_Tarps_data.txt" in the analysis.
+ 
+
+Remove "orthovnir067_ROI_Blue_Tarps_data.txt"
+```{r Hold Out EDA 4}
+txtfiles[3]
+txtfiles = txtfiles[-3]
+txtfiles
+```
+
+Label the data by file: Blue Tarp -> found = 1. NON_Blue_Tarp / NOT_Blue_Tarp -> found = 0
+```{r Hold Out EDA 5}
+#All text files to tibble
+txt.files.lab = as_tibble(txtfiles)
+#Label based on file name
+txt.files.lab$found = c(0,1,0,1,0,1,0)
+txt.files.lab
+```
+
+Create single labeled data frame / tibble for aggregate holdout data observations
+```{r Hold Out EDA 6}
+holdoutdata = as_tibble(NA)
+
+#nrow(txt.files.lab)
+#nrow(txt.files.lab)
+for (i in 1:nrow(txt.files.lab)) {
+  #print(length(txt.files.lab[i]))
+  data1 = read_table(file.path(filepath, txt.files.lab[i, 1]), skip = 7, col_names = TRUE, 
+                     col_types = cols(';' ="-", ID = "c")) #n_max = 20
+  data1$file = txt.files.lab[[i, 1]]
+  data1$found = txt.files.lab[[i, 2]]
+  #txt.files.lab[i, "nrows"] = nrow(data1) #Record number of rows
+  #print(head(data1))
+  holdoutdata <- bind_rows(holdoutdata, data1)
+  #col_types = cols( ; = "-", ID = "c")
+}
+
+head(holdoutdata)
+#view(holdoutdata)
+```
+
+Remove first row and column
+```{r Hold Out EDA 7}
+holdoutdata <- holdoutdata[-1, ]
+holdoutdata <- holdoutdata[, -1]
+head(holdoutdata)
+```
+
+Check for high level inconsistencies
+```{r Hold Out EDA 8, warning = FALSE, message=FALSE}
+holdoutdata %>%
+  select(c('file', 'B1', 'B2', 'B3', 'found')) %>%
+  summarise_all(list(~sum(is.na(.))))
+
+holdoutdata %>% 
+  group_by(file) %>% 
+  summarise_all(mean) %>%
+  select(c('file', 'X', 'Y', 'Lat', 'Lon', 'B1', 'B2', 'B3', 'found'))
+
+holdoutdata %>%
+  group_by(file) %>%
+  summarise_all(min)%>%
+  select(c('file', 'X', 'Y', 'Lat', 'Lon', 'B1', 'B2', 'B3', 'found'))
+
+holdoutdata %>%
+  group_by(file) %>%
+  summarise_all(max) %>%
+  select(c('file', 'X', 'Y', 'Lat', 'Lon', 'B1', 'B2', 'B3', 'found'))
+
+summary(holdoutdata)
+
+```
+Observations:
+
+- No NA's
+
+- Min, Max, Mean - look reasonable, are unique to each data file, and seem consistent with the filing labeling (Blue Tarp has higher blue values and visa versa)
+
+- Nothing pops out as suspicious
+
+
+
+Finalize data table
+RGB: B1 = Red, B2 = Green, B3 = Blue
+
+```{r}
+holdoutdata <-holdoutdata %>%
+  select(c('B1', 'B2', 'B3', 'found'))
+
+holdoutdata <- holdoutdata %>%
+  rename(Red = B1, Green = B2, Blue = B3, found = found)
+```
+
+Ensure 'found' is encoded as a Factor
+```{r}
+#Not yet categorical variable
+#str(holdoutdata)
+
+holdoutdata$found <- as.factor(holdoutdata$found)
+str(holdoutdata)
+```
+Create data set with third degree polynomial terms for penalized logistic regression predictions in hold out data evaluation.
+```{r holdout poly}
+holdoutdata.poly <- data.frame(holdoutdata$found,
+                               holdoutdata$Red, holdoutdata$Red^2, holdoutdata$Red^3,
+                               holdoutdata$Green, holdoutdata$Green^2, holdoutdata$Green^3,
+                               holdoutdata$Blue, holdoutdata$Blue^2, holdoutdata$Blue^3)
+
+colnames(holdoutdata.poly) <- c("found", "Red1", "Red2", "Red3", "Green1", "Green2", "Green3", 
+                                "Blue", "Blue2", "Blue3")
+
+```
+
+## Hold-Out Data EDA
+Some high level calculations were made to infer potential differences between the training and hold-out data sets.
+
+Frequency of observed blue tarp observations:
+```{r Hold Out EDA - Blue Tarp Frequency}
+# Training Data
+sum(haiti$found==1)/nrow(haiti)
+
+# Hold-Out Data
+sum(holdoutdata$found==1)/nrow(holdoutdata)
+
+# Comparison of Frequency
+(sum(haiti$found==1)/nrow(haiti)) / (sum(holdoutdata$found==1)/nrow(holdoutdata))
+```
+3.2% of observations in the training data set were blue tarps, while only 0.7% of observations in the hold-out data set were blue tarps. The percentage of blue tarp observations in the training data set was approximately 4.25 times that of the hold-out data set.
+
+
+Summary Statistics:
+```{r Hold Out EDA - Summary Statistics}
+summary(haiti[, -1]) #omit "Class"
+summary(holdoutdata)
+```
+The mean and median values were significantly lower for each predictor (Red, Green, and Blue) in the hold-out data than the training data. This can be interpreted as the brightness being lower in the hold-out data set and more correspond with weather or time of day.
+
+Pairwise Comparisons:
+```{r Hold Out EDA - Pairwise}
+#Pairwise comparisons of full data set
+pairs(holdoutdata[, 1:3], main = "Full Data Set")
+
+#Pairwise comparisons of Blue Tarp values only
+#summary(haiti[haiti$Class == "Blue Tarp", 2:4])
+pairs(holdoutdata[holdoutdata$found == 1, 1:3], main = "Blue Tarp Only")
+```
+Certain features or groups of data are observed in the hold-out data which are not observed in the training data. In particular, when looking at the full data set each pairwise comparison  exhibits essentially two or three groups of data. This would warrant further inspection or discussions with those collecting the data to understand the differences. For example, these observations may correspond to different times of day or weather patterns.
+
+Additionally, in comparing the Blue/Red comparisons between the full data set and "Blue Tarp" subset, it seems that one "group" of data possessed no Blue Tarp observations.  The same is true when considering the Blue/Green pairwise comparisons.
+
+
+# Results (Hold-Out)
+The following process was implemented to obtain the model results on the hold-out data:
+
+- Fit each model with its previously identified optimal tuning parameters
+
+- Obtain the predicted probabilities on the hold-out data
+
+- Obtain the predicted values associated with the chosen threshold for each model
+
+- Perform the appropriate calculations
+
+- Summarize the results
+
+```{r Final Results, warning = FALSE}
+# Create empty dataframe for summary data
+holdout.summary.results <- create_summary_table(7)
+
+### 1. Logistic Regression 
+model.name = "Logistic Regression"
+i = 1
+
+# Tuning Parameters
+polynomial = 3
+threshold = .125
+
+# Fit Model
+glm.fit <- glm(found~Red+poly(Blue, polynomial)+Green, 
+               family = binomial, data = haiti)
+
+## Get Probabilities
+glm.fit.prob = predict(glm.fit, newdata=holdoutdata, type = "response")
+    
+## Table of Predictions (based on threshold)
+glm.fit.pred = rep(0, nrow(holdoutdata))
+glm.fit.pred[glm.fit.prob > threshold] = 1
+
+# Calculate Results
+prob = glm.fit.prob
+pred = glm.fit.pred
+confusion <- table(pred, holdoutdata$found)
+holdout.summary.results[i, ] <- as.list(get_results(i, model.name, polynomial, holdoutdata$found, prob, threshold, confusion))
+
+
+### 2. LDA 
+model.name = "LDA"
+i = 2
+
+# Tuning Parameters
+threshold = 0.075
+
+# Fit Model
+lda.fit <- lda(found~Red+Blue+Green, data = haiti)
+
+## Probability - Note: first column corresponds to p(found = 0), 
+### second column corresponds to p(found = 1)
+lda.predictprob = predict(lda.fit, newdata=holdoutdata)
+    
+## Predicted Value - see note above
+lda.predictval <- lda.predictprob$posterior[, 2]>=threshold 
+
+#Calculate Results
+prob = lda.predictprob$posterior[, 2]
+pred = lda.predictval
+confusion <- table(pred, holdoutdata$found)
+holdout.summary.results[i, ] <- as.list(get_results(i, model.name, 0, holdoutdata$found, prob, threshold, confusion))
+
+
+### 3. QDA 
+model.name = "QDA"
+i = 3
+
+# Tuning Parameters
+threshold = 0.05
+
+# Fit Model
+qda.fit <- qda(found~Red+Blue+Green, data = haiti)
+
+## Probability - Note: first column corresponds to p(found = 0), 
+### second column corresponds to p(found = 1)
+qda.predictprob = predict(qda.fit, holdoutdata)
+
+## Predicted Value - see note above
+qda.predictval <- qda.predictprob$posterior[, 2]>=threshold
+
+#Calculate Results
+prob = qda.predictprob$posterior[, 2]
+pred = qda.predictval
+confusion <- table(pred, holdoutdata$found)
+holdout.summary.results[i, ] <- as.list(get_results(3, model.name, 0, holdoutdata$found, prob, threshold, confusion))
+
+### 4. KNN
+model.name = "KNN"
+i = 4
+
+# Tuning Parameters
+knum = 37
+threshold = 5/37
+
+# Fit Model, obtain predictions
+
+train.x <- haiti[, c("Blue", "Red", "Green")] %>% as.matrix()
+test.x <- holdoutdata[, c("Blue", "Red", "Green")] %>% as.matrix()
+train.y <- haiti$found %>% as.matrix()
+
+knn.model <- knn(train.x, test.x, train.y, k = knum, prob = TRUE)
+
+
+### Create probability table
+kresults <- data.frame(knn.model, attr(knn.model, "prob"))
+colnames(kresults) <- c("prediction", "probability")
+### If found, record probability
+kresults$p1 <- rep(0, nrow(kresults))
+kresults[kresults$prediction == 1, "p1"] <- kresults[kresults$prediction == 1, "probability"]
+### If not found, record 1-probability (this is p(found))
+kresults$p2 <- rep(0, nrow(kresults))
+kresults[kresults$prediction == 0, "p2"] <- 1 - kresults[kresults$prediction == 0, "probability"]
+### Take max value (column values were initially set to zero)
+kresults$prob_found <- apply(kresults[, 3:4], 1, max)
+### Set to "clean" variable for reference
+knn.prob <- kresults$prob_found
+
+### Obtain Predictions (for variable thresholds)
+### Note: for threshold of 0.5, original fit is sufficient
+#### Column to record predictions based upon a variable threshold
+kresults$thresh.pred <- rep(0, nrow(kresults)) 
+#### #Note: set to >= given the vote counting context
+kresults[kresults$prob_found >= threshold, "thresh.pred"] <- 1 
+knn.predictions <- kresults$thresh.pred
+
+#Calculate Results
+prob = knn.prob
+pred = knn.predictions
+confusion <- table(pred, holdoutdata$found)
+holdout.summary.results[i, ] <- as.list(get_results(i, model.name, 1, holdoutdata$found, prob, threshold, confusion))
+
+
+### 5. Penalized Logistic Regression
+model.name = "Penalized Log Reg"
+i = 5
+
+# Tuning Parameters
+alpha_j = 1
+#bestlam - previously calculated
+threshold = .125
+
+# Fit Model
+
+## Split Training x and y
+x = model.matrix(found~., family = "binomial", haiti.poly)[, -1]
+y = as.matrix(as.numeric(haiti.poly$found))
+
+#Best lambda previously calculated
+
+## Fit
+penlogreg = glmnet(x, y, family = "binomial", alpha = alpha_j)
+
+## Probabilities
+x.test= model.matrix(found~., family = "binomial", holdoutdata.poly) [, -1]
+penal.prob <- predict(penlogreg, newx = x.test, s = bestlam, type = "response")
+
+## Predictions
+penal.predictions <- ifelse(penal.prob > threshold, 1, 0)
+
+## Must convert to vector from matrix to compute AUC
+penal.prob <- as.vector(penal.prob)
+
+#Calculate Results
+prob = penal.prob
+pred = penal.predictions
+confusion <- table(pred, holdoutdata$found)
+holdout.summary.results[i, ] <- as.list(get_results(i, model.name, 1, holdoutdata$found, prob, threshold, confusion))
+
+
+### 6. Random Forest
+model.name = "Random Forest"
+i = 6
+
+# Tuning Parameters
+ntree = 100
+mtrynum = 1
+#maxnodes - default to unconstrained
+#sampsize - default to all observations
+threshold = .125
+
+# Fit Model
+set.seed(215)
+rf.fit <- randomForest(found~Red+Green+Blue, data=haiti, mtry = mtrynum, 
+                       ntree = numtrees)
+
+## Probabilities
+rf.fit.prob = predict(rf.fit, newdata = holdoutdata, type = "prob")
+
+## Table of Predictions (based on threshold)
+rf.fit.pred = rep(0, nrow(holdoutdata))
+rf.fit.pred[rf.fit.prob[, 2] > threshold] = 1
+
+#Calculate Results
+prob = rf.fit.prob[, 2]
+pred = rf.fit.pred
+confusion <- table(pred, holdoutdata$found)
+holdout.summary.results[i, ] <- as.list(get_results(i, model.name, 1, holdoutdata$found, prob, threshold, confusion))
+
+
+### 7. Support Vector Machine
+model.name = "Support Vector Machine"
+i = 7
+
+# Tuning Parameters
+# Linear Kernel
+costnum = 1e-2
+threshold = .225
+
+# Fit Model
+svm.fit <- svm(found~Red+Green+Blue, data=haiti, kernel="linear", cost = costnum,
+                scale = FALSE, type = "C", probability = TRUE)
+
+## Probabilities
+svm.fit.probcalc = predict(svm.fit, newdata = holdoutdata, decision.value = TRUE, probability = TRUE)
+svm.fit.prob = attr(svm.fit.probcalc, "probabilities")[, 2]
+  
+## Table of Predictions (based on threshold)
+svm.fit.pred = rep(0, nrow(holdoutdata))
+svm.fit.pred[svm.fit.prob > threshold] = 1
+
+#Calculate Results
+prob = svm.fit.prob
+pred = svm.fit.pred
+confusion <- table(pred, holdoutdata$found)
+holdout.summary.results[i, ] <- as.list(get_results(i, model.name, 1, holdoutdata$found, prob, threshold, confusion))
+
+#Add tuning parameter descriptions
+#Logistic Regression
+holdout.summary.results[1, "Tuning"] = "polynomial = 3"
+#LDA
+holdout.summary.results[2, "Tuning"] = "NA"
+#QDA
+holdout.summary.results[3, "Tuning"] = "NA"
+#KNN
+holdout.summary.results[4, "Tuning"] = "k = 37"
+#Penal Log Reg
+holdout.summary.results[5, "Tuning"] = "alpha = 1, lam = 5.7e-6"
+#Random Forest
+holdout.summary.results[6, "Tuning"] = "mtry = 1, ntree = 100"
+#SVM
+holdout.summary.results[7, "Tuning"] = "linear kernel, cost = 1e-2"
+
+# Format Summary Results Table
+holdout.summary.results <- data.frame(
+  holdout.summary.results[, 2:3],
+  sapply(holdout.summary.results[, 4:10], as.numeric))
+
+holdout.summary.results %>%
+  kbl(caption = "Summary Results - Hold-Out Data") %>%
+  kable_classic(full_width = F)
+```
+
+
+Of note the AUROC for most models, with the exception of QDA and Penalized Logistic Regression remained strong on the hold-out data. While there is clearly a significant difference in the frequency of blue tarps observed in the training and hold-out data sets, the AUROCs and TPRs suggest that the threshold could be re-evaluated for certain models. 
+
+The highest true positive rates and precision values, and hence the "best models", are associated with Logistic Regression and KNN. The Random Forest and Support Vector Machine models demonstrated high true positive rates and AUROCs, suggesting that threshold could be re-evaluated to improve precision, though Logistic Regression already possessed the highest true positive rate and precision. Support Vector Machines generated a relatively high false positive rate.
+
+
+### Conclusion \#1 
+**Discuss the best performing algorithm(s) in cross-validation and hold-out data**
+
+
+**Cross Validation**
+
+Cross validation on the training data set suggested that LDA and QDA were largely inadequate in comparison to the other models based upon the associated true positive rate and precision (as well as the previously defined loss function). Of the remaining models, Support Vector Machines appeared weakest, as illustrated by the higher loss function value (suggesting a low TPR in relation to precision). Logistic Regression, KNN, Penalized Logistic Regression, and Random Forest were roughly comparable in terms of performance. 
+
+**Hold-Out Data**
+
+Logistic Regression (utilizing up to third degree polynomial “Blue” terms) clearly performed the best, with the highest true positive rate and precision. KNN also performed well relative to the other models. LDA performed well, particularly given its relative cross-validation performance. Random Forest also generated acceptable relative performance. 
+
+Penalized Logistic Regression performed particularly poorly, though Support Vector Machines and QDA also underperformed.
+
+Of note, the precision of each model was suboptimal. This is at least partiallly due to the difference in frequency of Blue Tarp observations between the data sets. In addition, obvious differences were observed between the Hold-Out Data EDA and the training data set. The Hold-Out data appeared to be collected under different weather/light conditions and/or with different equipment.
+
+### Conclusion \#2
+**Discuss or present an analysis of why these findings are compatible or reconcilable **
+
+As previously discussed, significant differences existed between the training and hold-out data sets. Specifically, the frequency of blue tarps was over four times higher in the training set than the hold-out set. Additionally, the brightness of the data sets appears to be significantly higher in the training set based upon the Red, Green, and Blue predictor value median and mean values.
+
+Each of the models demonstrated a significant decline in precision between cross validation and the hold-out dataset, at least partially due to the lower frequency of blue tarps, resulting in a lower number of true positives relative to false positives. This issue can potentially be solved by re-evaluating the threshold (either in real-time as measurements come in, or through some high-level understanding of the process which generated the training data and hold-out data). Models such as Logistic Regression generated a strong AUROC during cross validation and as measured in the hold-out data set. These models could potentially improve hold-out results by re-evaluating the threshold. 
+
+It should be noted that while the Support Vector Machine model generated a strong AUROC, its high false positive rate relative to the other models results in a suboptimal model. Other kernels were explored (not pictured) which resulted in large swings in the TPR and FPR but generally also resulted in a suboptimal model. For example, the radial kernel with $\gamma$ = 1e-4 and cost = 1e2 showed obvious signs of overfitting and experienced performance declines consistent with penalized logistic regression.
+
+Penalized Logistic Regression demonstrated a significant decline performance, as observed by not only the true positive rate and false positive rate but also by the significant decline in AUROC.  Less flexible models generally performed better on the hold-out data than more flexible models. This can be observed directly by (1) Logistic Regression generating the strongest performance, (2) LDA significantly outperforming QDA on the hold-out data set despite underperforming during cross validation, and (3) the significant decline in performance of penalized logistic regression (which considered up to third degree polynomials of each predictor). This suggests some degree of overfitting may have occurred on the training data set by the more flexible models. This overfitting was made evident by the somewhat specific data set used to train relative to the hold-out data set, which seemed to be collected under a variety of conditions. 
+
+### Conclusion \#3
+**Present a recommendation and rationale for which algorithm to ensure for detection of blue tarps **
+
+I would recommend Logistic Regression as the algorithm to use for detecting blue tarps (specifically considering higher order polynomials for the Blue predictor). With regards to cross-validation, the performance of Logistic Regression was highly comparable to other models (as measured by AUROC, TPR, FPR, Precision, and Loss). At the same time, Logistic Regression is one of the least flexible models, and thus less subject to overfitting. 
+
+Logistic Regression clearly outperformed each of the other models on the hold-out data set, as demonstrated by AUROC, TPR, FPR, Precision, and Loss. Additionally, while the precision declined significantly between cross validation and the hold-out evaluation, this could be addressed by evaluation of real-time data and/or insight regarding the collection of training vs. hold-out data (e.g. the training data was collected on a sunny day or very close to an urban center). The importance of precision is subject to the actual circumstances of the situation. Specifically, if in a real-world implementation someone were able to “check” the aerial photographs before sending supplies the lower precision may be completely acceptable. Conversely, budgets, supply inventories, and an inability to quickly mitigate false positives may determine the threshold derived through cross-validation to be inadequate for Logistic Regression and all models.
+
+### Conclusion \#4
+**Discuss the relevance of the metrics calculated in the table to this application context**
+
+**- AUROC:** measures the predictive ability of a model across a variety of thresholds. This is an extremely useful metric, particularly in optimizing tuning parameters. Generating the highest AUROC suggests that the model can generate a higher tradeoff between true positive rate and false positive rate (which inherently affects precision). 
+
+**- ACCURACY:** has limited relevance to this particular application. Accuracy could arguable useful to support decisions based upon AUROC calculations, however it is largely unnecessary. In this situation the penalty for a false negative and false positive vary widely, as a false negative may result in the suffering and/or death of a human being. Within this context, a higher TPR and FPR associated with a lower accuracy are desirable within real-world constraints.
+
+**- TPR:** true positive rate essentially indicates the percentage of people that will receive resources. TPR is extremely important given the context of this problem given that it is synonymous with lives saved and the prevention of human suffering. 
+
+**- FPR:** is important within the context of resource constraints. The importance of this metric is largely dependent upon the real-world application. If someone is able to quickly check an aerial photograph to double check the algorithm, there is a somewhat minimal cost to false positives. Conversely, if supplies have to be hiked in, significant budget constraints exist, or there are significant limits to supply inventories the false positive rate becomes more important. Additionally, the frequency of “blue tarp” observations relative to “no blue tarp” observations should be considered alongside the false positive rate. The false positive rate has a direct effect on cost (human time, monetary, supplies, etc.).
+
+**- PRECISION:** can be interpreted as the percentage of predicted positives that are accurate. Precision is essentially a balance of positive benefit (lives saved/human suffering prevented) to cost. Given the context of this problem, precision is extremely important given that any humanitarian effort has some set of real-world constraints. 
+
+### Conclusion \#5
+**How effective do you think your work here could actually be in terms of helping to save human life?**
+
+The results of this exercise are compelling, though some additional real-world insight may be required for successful implementation. Specifically, each of the models generated a precision of less than 50% on the hold-out data. Though limited information is presented about the real-world implementation, this seems problematic.
+
+This issue may be resolved with a re-evaluation of the threshold of certain models. As previously discussed, a re-evaluation of real-time data or some high-level insight may be beneficial. For example, human evaluation of a subset of aerial photos from each data set may indicate obvious differences and suggest using a higher threshold. Logistic Regression generated a TPR of .994 and a FPR of only .013, suggesting that it is a good candidate for this re-optimization.
+
+Even with the somewhat lower precision observed in the hold-out data, if these models were able to identify focus areas for further human inspection, they may still save a significant amount of time during an urgent situation. 
+
+
+### Conclusion \#6
+**Were there multiple adequately performing methods, or just one clear best method? What is your level of confidence in the results?**
+
+Multiple adequate models were observed in this work. In particular, Logistic Regression, KNN, and Random Forest generated reasonable performance as measured by both cross validation and using the hold-out data set (assuming a low level of precision is acceptable and/or a re-evaluation of threshold is possible). 
+
+Of note, significant differences existed between the training data set and the hold-out data set, including the frequency of blue tarp observations and brightness. While the results of the above-mentioned models are positive, given these differences, it does raise significant questions regarding the conditions of training data collection relative to the actual implementation. For example, if the training data was collected on a sunny day at noon near an urban area (bright with a high expected number of blue tarps), similar performance may not be expected on cloudy days during early morning in rural areas.The pairwise comparisons of the hold-out data set suggested that data was collected under multiple lighting conditions and/or with multiple sets of equipment.
+
+The limited information regarding the data collection process and conditions provides some uncertainty. However, I view this as a potential question to explore and consideration refining the model selection and optimization, rather than uncertainty in the process or potential for a model to save significant time and resources.
+
+
+# References
+
+Plotly
+
+https://plotly.com/r/3d-scatter-plots/
+
+
+Logistic Regressin with Class Separation
+
+https://medium.com/analytics-vidhya/how-to-use-linear-discriminant-analysis-for-classification-8e46e0ceb3ef
+
+
+AUC / ROC
+
+https://www.rdocumentation.org/packages/pROC/versions/1.17.0.1/topics/auc
+
+https://www.youtube.com/watch?v=qcvAqAH60Yw 
+
+
+LDA ROC
+
+https://stackoverflow.com/questions/41533811/roc-curve-in-linear-discriminant-analysis-with-r
+
+
+Confusion Matrix
+
+https://classeval.wordpress.com/introduction/basic-evaluation-measures/
+
+
+glmnet
+
+https://glmnet.stanford.edu/articles/glmnet.html
+
+https://cran.r-project.org/web/packages/glmnet/glmnet.pdf
+
+
+Penalized Logistic Regression
+
+http://www.sthda.com/english/articles/36-classification-methods-essentials/149-penalized-logistic-regression-essentials-in-r-ridge-lasso-and-elastic-net/
+
+
+Random Forests
+
+https://cran.r-project.org/web/packages/randomForest/randomForest.pdf
+
+
+Support Vector Machine Probabilities
+
+https://www.rdocumentation.org/packages/e1071/versions/1.7-6/topics/predict.svm
+
+
+Haiti Earthquake
+
+https://en.wikipedia.org/wiki/2010_Haiti_earthquake
+
+
+ggplot
+
+http://www.sthda.com/english/wiki/ggplot2-scatter-plots-quick-start-guide-r-software-and-data-visualization
+
+https://ggplot2.tidyverse.org/reference/
+
+
+R Markdown
+
+https://people.ok.ubc.ca/jpither/modules/Symbols_markdown.html
+
+https://rpruim.github.io/s341/S19/from-class/MathinRmd.html
+
+
+Kable Extra
+
+https://cran.r-project.org/web/packages/kableExtra/vignettes/awesome_table_in_html.html#Column__Row_Specification
+
+https://cran.r-project.org/web/packages/kableExtra/kableExtra.pdf
